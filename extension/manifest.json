@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tactiq Live → Claude Code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Explicitly forward the selected Tactiq meeting's live transcript through a local Claude Code channel.",
   "minimum_chrome_version": "125",
   "devtools_page": "devtools.html",

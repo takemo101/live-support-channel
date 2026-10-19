@@ -1,6 +1,6 @@
 # Tactiq Live → Claude Code：使い方と仕様
 
-バージョン：0.1.0。最終更新：2026-10-19。
+バージョン：0.2.0。最終更新：2026-10-19。
 
 > **手動導入前の試作です。** ダミーデータ、Chrome API境界の模擬、実ローカルHTTP／MCP stdio通信は自動テスト済みですが、実Chrome・実Tactiq・実Claude Codeをつないだ動作は未検証です。実会議で利用可能と判断する前に、非機密のテスト会議で確認してください。
 
@@ -10,6 +10,7 @@ Tactiqが処理した会議中の字幕を、明示的に選択したClaude Code
 
 ### 実装している機能
 
+- GitHubからグローバルインストールし、各プロジェクトで同じCLIを利用する。受信先は一度に1プロジェクト。
 - 選択した一つの会議の、新規発話と発話修正の取得。
 - 約5秒ごとの確認。差分がなければ送信しない。
 - 明示開始・停止、Tactiq一時停止への追従、ページ移動・DevToolsパネル切替時の停止。
@@ -50,29 +51,28 @@ Claude Code Channelsはresearch previewです。公式資料ではBedrock、Goog
 
 ## 3. 初回セットアップ
 
-### 3.1 プロジェクトを取得する
+### 3.1 CLIを一度インストールする
 
-取得したリポジトリのルートを作業ディレクトリにします。以降のコマンドはすべてそのルートで実行してください。
-
-```bash
-npm ci --ignore-scripts
-npm test
-```
-
-ビルド・bundlingは不要です。依存関係はMCPの公式JavaScript SDKで、版はlockfileに固定します。Tactiq本体やREAはこの連携の通常起動に必要な依存関係ではありません。
-
-### 3.2 Claude Codeを起動する
+Node.jsとClaude Codeを本人が用意した環境で実行します。npmレジストリではなく公開GitHubリポジトリから取得します。
 
 ```bash
-claude \
-  --mcp-config ./mcp.local.json \
-  --strict-mcp-config \
-  --tools "" \
-  --disable-slash-commands \
-  --dangerously-load-development-channels server:tactiq-live
+npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
+tactiq-live setup
 ```
 
-- `mcp.local.json` は `node server/main.js` をstdio MCPサーバーとして起動する設定。相対パスなのでルートから起動する。
+`setup` はユーザー専用の `~/.tactiq-live-channel/extension` に補助拡張を配置し、そのパスを表示します。Chromeの設定・Claudeのグローバル設定は自動変更しません。Tactiq本体やREAは通常起動の依存関係ではありません。
+
+ビルド・bundling・install scriptは不要です。配布物はbin、server、extensionと公開ドキュメントに限定し、実行データ・第三者配布物・解析scratchは含めません。
+
+### 3.2 任意のプロジェクトでClaude Codeを起動する
+
+```bash
+cd /path/to/your-project
+tactiq-live claude
+```
+
+CLIは作業ディレクトリを保ったまま、インストールされたNodeとserverの絶対パスからMCP設定を組み立て、その起動だけに渡します。各プロジェクトへMCP設定やコードをコピーする必要はありません。内部では次のflagを付けます。
+
 - `--strict-mcp-config`：指定外のMCP設定を読み込まない。
 - `--tools ""`：字幕をきっかけとするファイル操作・コマンド実行を避ける安全な初期設定。
 - `--disable-slash-commands`：skillsを無効化する。
@@ -80,27 +80,46 @@ claude \
 
 起動時の承認や組織ポリシーに従い、`tactiq-live` が**channelとして有効**なことを確認してください。通常のMCP接続成功だけではpush通知を受け取れるとは限りません。
 
-サーバーはこのClaudeプロセスに起動させます。別のターミナルで `npm run channel` を重ねて起動する必要はありません。MCPクライアントなしでサーバーだけ起動しても、字幕をClaudeへ届けることはできません。
+サーバーはこのClaudeプロセスに起動させます。別途サーバーを起動する必要はありません。受信port使用中、または別ランチャーの排他ファイルがある場合は起動を拒否します。通常終了・扱える終了signalでは子プロセス終了を待ち、排他ファイルを解除します。
+
+同時に複数プロジェクトへ配信する機能はありません。プロジェクト切替は、パネル停止 → 前のランチャー終了 → 次のプロジェクトで起動 → 新トークンで再ペアリング、の順に行います。
+
+ソースの `mcp.local.json` は開発用です。通常利用はCLIを使ってください。直接serverを起動すると、CLIの排他・起動ごとのtoken更新は適用されません。
 
 ### 3.3 ペアリングトークンを確認する
 
-起動後、ルートの `.runtime/token` にランダムなトークンが生成されます。
+ランチャー起動後、別ターミナルで実行します。
 
-- ディレクトリ：0700、ファイル：0600。
-- 既存の正しいトークンは再利用する。
-- symlinkや公開権限のファイルは拒否する。
-- Gitの公開対象外。サーバーログにも出さない。
+```bash
+tactiq-live token
+```
 
-ローカルエディタ等で値を確認し、後述のパネルへ貼り付けます。**GitHub、チャット、スクリーンショットへ載せないでください。**
+- 保存先は `~/.tactiq-live-channel/token`。プロジェクト外に置く。
+- ディレクトリ0700、ファイル0600。symlinkや公開権限のファイルは拒否する。
+- `claude` 起動ごとに新しいtokenへ原子的に置換する。前のパネルのtokenは新しい受信先で認証されない。
+- `setup`／`token` は既存の正しいtokenを再利用し、勝手にローテーションしない。
+- `token` サブコマンドは値をローカル標準出力へ明示表示する。それ以外の通常ログへは出さない。
+
+起動ごとに新しい値をパネルへ貼り付けます。**GitHub、チャット、スクリーンショットへ載せないでください。**
 
 ### 3.4 補助Chrome拡張を読み込む
 
 1. Chromeで `chrome://extensions` を開く。
 2. デベロッパーモードを有効にする。
-3. 「パッケージ化されていない拡張機能を読み込む」から、このリポジトリの `extension/` を選ぶ。
+3. 「パッケージ化されていない拡張機能を読み込む」から、`tactiq-live setup` が表示したフォルダ（通常 `~/.tactiq-live-channel/extension`）を選ぶ。
 4. 既に開いているDevToolsは一度閉じて開き直す。
 
-補助拡張はTactiqとは別の拡張です。Tactiqのインストールや設定を変更しません。
+補助拡張はTactiqとは別の拡張です。Tactiqのインストールや設定を変更しません。初回読込みは手動で、以後プロジェクトごとの読込み直しは不要です。
+
+### 3.5 更新・削除
+
+転送とClaudeランチャーを停止してからインストールコマンドを再実行し、`tactiq-live setup` とChrome拡張の再読み込みを行います。拡張の保存先は変わりません。
+
+```bash
+npm uninstall --global tactiq-live-channel
+```
+
+アンインストールはユーザーディレクトリやChromeの登録を自動削除しません。不要な場合は、全プロセス停止後に本人が確認して削除します。
 
 ## 4. 会議での操作
 
@@ -109,7 +128,7 @@ claude \
 1. 会議参加者の同意、組織規程、Claude／Anthropic側のデータ取扱いを確認する。
 2. 会議をChromeで開き、Tactiqの文字起こしが動いていることを確認する。
 3. **その会議タブ**でDevToolsを開き、`Tactiq Live` パネルを選ぶ。見えなければ `»` メニューを確認する。
-4. `.runtime/token` の値を貼り付ける。ブラウザの永続storageには保存しない。
+4. `tactiq-live token` で得た今回の起動用tokenを貼り付ける。ブラウザの永続storageには保存しない。
 5. 「Tactiqの会議を確認」を押し、対象会議を選ぶ。
 6. 同意確認にチェックし、「Claude Codeへ転送開始」を押す。
 7. 接続成功後、**次の新しい発話から**転送される。
@@ -182,6 +201,8 @@ Tactiqのisolated world
 | `extension/panel.js` | UI、固定contextの読取り、開始停止、5秒timer、HTTP |
 | `extension/snapshot.js` | 選択会議だけの処理済み状態をwhitelist形式へ変換 |
 | `extension/stream.js` | baseline除外、差分、バッチ、再送 |
+| `bin/tactiq-live.js` | setup／Claude起動／token表示、排他、token更新、子プロセス終了 |
+| `server/runtime.js` | ユーザー専用保存先と環境変数override |
 | `server/main.js` | MCP capability、stdio接続、loopback起動、終了 |
 | `server/bridge.js` | HTTP入力検査、認証、順序、重複抑止、channel通知 |
 | `server/token.js` | トークンの安全な生成・読取り |
@@ -339,17 +360,19 @@ MCP capability：
 
 巨大な単一blockや未知schemaは無言で切り捨てず停止します。大量の差分は複数バッチへ分割するため、後続分は次のpoll以降になります。
 
-環境変数 `TACTIQ_RUNTIME_DIR` はサーバーのtoken保存先、`TACTIQ_PORT` はサーバーportを変更できます。主にテスト／開発用です。**パネルとCSPは43821に固定**されているため、サーバーportだけを変えても通常UIは接続できません。MCP設定へ秘密トークンを埋め込む必要はありません。
+既定のユーザー保存先は `~/.tactiq-live-channel/` です。環境変数 `TACTIQ_RUNTIME_DIR` はCLI・サーバー共通の保存先、`TACTIQ_PORT` はサーバーportを変更できます。主にテスト／開発用です。**パネルとCSPは43821に固定**されているため、サーバーportだけを変えても通常UIは接続できません。MCP設定へ秘密トークンを埋め込む必要はありません。
 
 ## 12. トラブル対処
 
 | 症状 | 確認・対処 |
 | --- | --- |
-| パネルが見えない | `extension/` を読み込んだか、DevTools再起動と `»` メニューを確認 |
+| コマンドが見つからない | npmのグローバルbinがPATHにあるか、現在のNode環境にインストールしたかを確認。sudoでの解決を前提にしない |
+| ランチャーlockが残っている | 前のプロセスが完全に終了したか確認。クラッシュで残った場合のみ `~/.tactiq-live-channel/launcher.lock` を本人が確認して削除する。稼働中に削除しない |
+| パネルが見えない | `setup` が表示した拡張フォルダを読み込んだか、DevTools再起動と `»` メニューを確認 |
 | 会議一覧が空 | 正しい会議タブか、Tactiqが動いているか、対応hostかを確認 |
 | contextが読めない | Tactiq版・frame配置・内部構造の相違を疑い、停止したまま調査。別contextへ勝手にfallbackしない |
 | 接続失敗 | channel付きClaudeが起動中か、43821の競合、ローカル通信制限を確認 |
-| 401 | 起動中サーバーの `.runtime/token` と一致するかを確認。値をログやIssueへ貼らない |
+| 401 | 起動後に `tactiq-live token` を再実行し新しい値を貼る。値をログやIssueへ貼らない |
 | 503 | MCP初期化・channel設定を確認。反復する場合は停止してサーバー状態を調べる |
 | 409 | サーバー再起動や系列不一致が考えられる。パネルを停止し、再確認・再開始。過去分は復元しない |
 | 429 | 頻繁な開始／pauseで32session上限。停止してサーバーを再起動し、再開始 |
@@ -357,7 +380,7 @@ MCP capability：
 | 送信中なのに最初の発話が来ない | baselineに存在した進行中発話は除外される。新しい発話から確認 |
 | HTTPは成功するがClaudeに来ない | 通常MCP接続だけでなくchannelとして有効か、アカウント／組織の提供条件を確認 |
 
-トークンを更新する場合は、**先にパネルとサーバーを停止**し、生成済み `.runtime/token` を削除してからサーバーを再起動し、新しい値で再ペアリングします。実行中にファイルだけを書き換えてもサーバーが保持する値は変わりません。
+通常のtoken更新はランチャー再起動時に自動で行います。破損等を手動で直す場合も、**先にパネルとサーバーを停止**してから扱ってください。実行中にファイルだけを書き換えても、サーバーが保持する値は変わりません。旧0.1版の `.runtime/token` は新しい保存先へ自動移行しません。
 
 ## 13. セキュリティと保持
 
@@ -376,7 +399,7 @@ npm test
 npm audit --omit=dev
 ```
 
-テストはNode標準test runnerを使用します。固定読取り式のVM実行、Chrome／DOM境界の模擬、privacy regression、packing上限、実HTTP、stdio MCP handshake、EOFのみでの終了を含みます。
+開発時はリポジトリルートで `npm ci --ignore-scripts` 後に実行します。テストはNode標準test runnerを使用します。CLIのhelp・配置・作業ディレクトリ維持・起動間token分離・排他・signal cleanupと、隔離したnpmグローバルインストールも確認します。固定読取り式のVM実行、Chrome／DOM境界の模擬、privacy regression、packing上限、実HTTP、stdio MCP handshake、EOFのみでの終了を含みます。
 
 **実Chromeのcontext読取り、三サービスの実Tactiq状態、実Claude Codeのモデル受信、長時間の精度・費用は未検証**です。ダミーテスト成功を本番の全経路保証として扱わないでください。
 

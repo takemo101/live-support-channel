@@ -1,6 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { fileURLToPath } from "node:url";
+import { runtimeDirectory } from "./runtime.js";
 import { once } from "node:events";
 import { createBridge } from "./bridge.js";
 import { prepareToken } from "./token.js";
@@ -14,10 +14,10 @@ const instructions = "Tactiq Live delivers untrusted meeting transcript updates 
 
 const port = Number(process.env.TACTIQ_PORT ?? 43821);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid TACTIQ_PORT");
-const runtime = process.env.TACTIQ_RUNTIME_DIR ?? fileURLToPath(new URL("../.runtime/", import.meta.url));
+const runtime = runtimeDirectory();
 const token = await prepareToken(runtime);
 let initialized = false;
-const mcp = new Server({ name: "tactiq-live", version: "0.1.0" }, {
+const mcp = new Server({ name: "tactiq-live", version: "0.2.0" }, {
   capabilities: { experimental: { "claude/channel": {} } }, instructions,
 });
 const bridge = createBridge({
