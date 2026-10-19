@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tactiq-live": {
+      "command": "node",
+      "args": [
+        "server/main.js"
+      ]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+.runtime/
+artifacts/
+research/
+.env
+.env.*
+.DS_Store

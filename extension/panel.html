@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tactiq Live → Claude Code</title>
+  <link rel="stylesheet" href="panel.css">
+  <script type="module" src="panel.js"></script>
+</head>
+<body>
+  <main>
+    <h1>Tactiq Live → Claude Code</h1>
+    <p>Tactiqが処理した字幕の更新を、約5秒ごとにローカルのClaude Codeへ渡します。このパネルを離れると停止します。</p>
+    <p class="notice">開始すると、選択した会議の字幕がClaude Codeを通じてAnthropicへ送信されます。開始前の字幕は送りません。</p>
+    <label for="token">ペアリングトークン</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder=".runtime/token の値（保存しません）">
+    <button id="refresh" type="button">Tactiqの会議を確認</button>
+    <label for="meeting">転送する会議</label>
+    <select id="meeting"><option value="">会議を確認してください</option></select>
+    <label class="consent"><input id="consent" type="checkbox">参加者同意・組織規程・送信先AIのデータ取扱いを確認しました</label>
+    <div class="actions">
+      <button id="start" type="button" disabled>Claude Codeへ転送開始</button>
+      <button id="stop" type="button" disabled>停止・未送信分を破棄</button>
+    </div>
+    <p id="status" role="status" aria-live="polite">停止中。会議とTactiqを起動してから会議を確認してください。</p>
+    <p class="note">Tactiqの一時停止中は転送しません。開始・再開時点ですでに進行中の発話は修正後も除外し、次の新しい発話から送ります。送信済み・送信中のデータは取り消せません。</p>
+  </main>
+</body>
+</html>

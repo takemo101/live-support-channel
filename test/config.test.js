@@ -1,0 +1,33 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+
+test("extension is a local-only DevTools panel without broad capture permissions", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.devtools_page, "devtools.html");
+  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
+  assert.equal(manifest.permissions, undefined);
+  assert.equal(manifest.content_scripts, undefined);
+  assert.match(manifest.content_security_policy.extension_pages, /connect-src http:\/\/127\.0\.0\.1:43821;/);
+  const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");
+  for (const id of ["token", "meeting", "consent", "refresh", "start", "stop", "status"]) assert.ok(html.includes('id="' + id + '"'));
+  assert.match(html, /role="status"/);
+  assert.ok(!/<script[^>]*>[^<\s]/.test(html));
+});
+test("leaving the DevTools panel signals a stop", async () => {
+  let onShown, onHidden, callbackCalled = false, event;
+  const source = await readFile(new URL("../extension/devtools.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, {
+    chrome: { devtools: { panels: { create(name, icon, page, callback) {
+      assert.equal(name, "Tactiq Live"); assert.equal(page, "panel.html");
+      callback({ onShown: { addListener(fn) { onShown = fn; } }, onHidden: { addListener(fn) { onHidden = fn; } } });
+      callbackCalled = true;
+    } } } },
+  });
+  assert.ok(callbackCalled);
+  onShown({ Event, dispatchEvent(e) { event = e; } });
+  onHidden();
+  assert.equal(event.type, "tactiq-panel-hidden");
+});
