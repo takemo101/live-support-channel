@@ -12,16 +12,19 @@ test("extension is a local-only DevTools panel without broad capture permissions
   assert.equal(manifest.content_scripts, undefined);
   assert.match(manifest.content_security_policy.extension_pages, /connect-src http:\/\/127\.0\.0\.1:43821;/);
   const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");
-  for (const id of ["token", "meeting", "consent", "refresh", "start", "stop", "status"]) assert.ok(html.includes('id="' + id + '"'));
+  for (const id of ["token", "meeting", "consent", "refresh", "start", "pause", "stop", "status"]) assert.ok(html.includes('id="' + id + '"'));
   assert.match(html, /role="status"/);
+  assert.match(html, /標準字幕/);
+  assert.match(html, /Tactiqの一時停止とは連動しません/);
+  assert.match(html, /Zoom.*Teams.*未実装/);
   assert.ok(!/<script[^>]*>[^<\s]/.test(html));
 });
 test("leaving the DevTools panel signals a stop", async () => {
   let onShown, onHidden, callbackCalled = false, event;
   const source = await readFile(new URL("../extension/devtools.js", import.meta.url), "utf8");
   vm.runInNewContext(source, {
-    chrome: { devtools: { panels: { create(name, icon, page, callback) {
-      assert.equal(name, "Tactiq Live"); assert.equal(page, "panel.html");
+    chrome: { devtools: { panels: { create(name, _icon, page, callback) {
+      assert.equal(name, "Live Captions"); assert.equal(page, "panel.html");
       callback({ onShown: { addListener(fn) { onShown = fn; } }, onHidden: { addListener(fn) { onHidden = fn; } } });
       callbackCalled = true;
     } } } },

@@ -1,10 +1,16 @@
-# Tactiq Live → Claude Code
+# Live Captions → Claude Code
 
-Tactiqの**会議中の字幕更新**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「今の話・相手の問い・口にできる返答案」を短く出す試作です。グローバルCLIとしてインストールし、各プロジェクトへコードやMCP設定をコピーせずに使えます。**受信先は一度に1プロジェクト**です。
+**Google Meetの標準字幕**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「今の話・相手の問い・口にできる返答案」を短く出す試作です。**Tactiqは不要**です。CLI名 `tactiq-live` と保存先は互換性のため維持しています。受信先は一度に1プロジェクトです。
 
-対象：Google Meet／Zoomブラウザ版／Teamsブラウザ版。解析対象のTactiqは **3.1.7185**。Node.js 22以上、Chrome 125以上、Channelsと `--restricted` に対応したClaude Codeが必要です（CLI確認版2.1.302）。検証環境はmacOSです。
+| 取得対象 | 状態 |
+| --- | --- |
+| Google Meetブラウザ版 | 標準字幕DOM readerを実装。**試験版・実会議の互換性は未確認** |
+| Zoom／Teamsブラウザ版 | 未実装。診断表示で停止 |
+| デスクトップ版・音声録音・新規ASR | 対象外 |
 
-> **実会議では未検証です。** ダミー字幕、CLIの隔離インストール、模擬Claudeランチャー、実ローカルHTTP／MCP stdio通信を検証していますが、実Chrome・実Tactiq・Claude Code本体をつないだ動作は別途確認が必要です。
+Node.js 22以上、Chrome 125以上、Channelsと `--restricted` に対応したClaude Codeが必要です（CLI確認版2.1.302／2.1.303）。検証環境はmacOSです。
+
+> **実会議では未検証です。** 隔離した実Chromeの合成DOM、実ローカルHTTP／MCP通知、CLIの隔離インストールを検証しています。実Meetの画面構造・DevTools接続・Claude／Haikuのモデル応答は別途受入確認が必要です。まず非機密のテスト会議で試してください。
 
 ## インストール（初回）
 
@@ -45,11 +51,12 @@ tactiq-live claude
 tactiq-live token
 ```
 
-**この値をGitHubやチャットへ貼らないでください。** 会議タブのDevTools → `Tactiq Live` パネルへ貼り、会議を確認・選択して、同意確認後に「転送開始」を押します。パネルを開いたまま使ってください。
+**この値をGitHubやチャットへ貼らないでください。** Meet会議内の**標準字幕をON**にして発話後、そのタブのDevTools → `Live Captions` パネルへ貼ります。「標準字幕を確認」→ 会議選択 → 参加者同意 →「転送開始」の順で操作し、パネルを開いたまま使ってください。Chrome全体の自動字幕ではなく、Meet内の字幕が対象です。
 
-- 約5秒ごとに確認し、新規・修正差分があるときだけ送ります。
-- 開始／再開時点にある発話は修正後も除外し、**次の新しい発話から**転送します。
-- Tactiqの一時停止・状態不明では送らず、ページ移動・パネル切替・明示停止で止まります。
+- 約1秒ごとに字幕を読み、約5秒ごとに新規・修正差分だけ送ります。消えた字幕の完全な復元はできません。
+- 開始／再開時点にある字幕行は、後の修正や続きも除外し、**次の新しい行から**転送します。
+- **専用の「一時停止」「再開」「停止」**で制御します。Tactiqの一時停止とは連動しません。一時停止中は読取り・送信をせず、再開時も現在の行を除外します。
+- 字幕OFF・不明な構造・曖昧なDOM置換、ページ移動・パネル切替で停止します。Tactiqが標準字幕を隠している場合も取得しません。
 - 起動時に会議モードが始まり、必要なプロジェクト資料を読取り専用で確認します。字幕に重要な変化があると短いカードを更新します。5秒ごとのAI応答を保証する機能ではありません。
 
 ### 会議中の支援
@@ -90,8 +97,9 @@ Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku tactiq-live claude` と起動で�
 - 自作Channelsには `--dangerously-load-development-channels server:tactiq-live` の明示的な開発用許可が必要です。ランチャーが渡しますが、Claude側の認証・承認・組織制限を迂回しません。
 - Channelsはresearch previewです。Bedrock／GoogleのAgent Platform／Microsoft Foundryは非対応との公式記載があります。
 - HTTP 202はSDK通知の書出し成功であり、AIによる受領・理解・応答完了の保証ではありません。
-- 非公開のTactiq内部構造に依存します。版更新やframe配置の違いで読めない場合は停止し、認証回避やDOMスクレイピングへ自動fallbackしません。
-- 送信済み・送信中のデータは取り消せません。永続キューや再起動をまたぐexactly-once保証はありません。
+- Meetの非公開DOM構造に依存します。字幕ボタンの判定は日本語／英語UIが対象。認識できない場合は診断コードを表示し、ページ全体の本文・通信・別拡張の内部状態へfallbackしません。
+- 旧版のTactiq内部context読取りはChromeの別拡張アクセス制限で失敗するため削除しました。権限拡大やセキュリティ無効化はしていません。
+- 停止時に処理中の読取り・送信、送信済みのデータは取り消せません。未送信分は破棄します。永続キュー・完全な議事録・再起動をまたぐexactly-once保証はありません。
 
 ## 更新・削除
 
@@ -114,6 +122,7 @@ node bin/tactiq-live.js --help
 ```
 
 - [使い方・CLI・データ形式・動作仕様：SPEC.md](SPEC.md)
+- [字幕readerの根拠・制限・診断](docs/native-captions.md)
 - [REAが分析に役立った点と限界](docs/rea-analysis-report.md)
 - [会議支援Skill](skills/meeting/SKILL.md)
 - [Claude Code Channels](https://code.claude.com/docs/en/channels) / [Channels reference](https://code.claude.com/docs/en/channels-reference)

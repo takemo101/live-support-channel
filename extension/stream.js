@@ -4,7 +4,7 @@ const hashes = snapshot => new Map(snapshot.blocks.map(block => [keyOf(block), J
 export class CaptionStream {
   constructor(send) { this.send = send; }
   start(snapshot) {
-    if (snapshot.status !== "live") throw new Error("Tactiq is not actively transcribing");
+    if (snapshot.status !== "live") throw new Error("Captions are not live");
     const baseline = hashes(snapshot);
     this.run = { sessionId: crypto.randomUUID(), meetingId: snapshot.meetingId, platform: snapshot.platform, sequence: 0, baseline, excluded: new Set(baseline.keys()) };
   }
@@ -18,12 +18,12 @@ export class CaptionStream {
       return;
     }
     if (snapshot.status !== "live" || snapshot.meetingId !== run.meetingId) { this.stop(); return; }
-    if (this.busy) return;
     if (!run.baseline) {
       run.baseline = hashes(snapshot);
       run.excluded = new Set(run.baseline.keys());
       return;
     }
+    if (this.busy) return;
     if (!run.pending) {
       const updates = [];
       let bytes = 0;

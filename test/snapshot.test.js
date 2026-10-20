@@ -1,61 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readTactiq, TACTIQ_CONTEXT } from "../extension/snapshot.js";
+import { readCaptions } from "../extension/snapshot.js";
 
-const block = { messageId: "m1", messageVersion: 1, speakerName: "Alice", transcript: "hello", timestamp: 100, version: 101 };
-function inspect(meetingId, { host = "meet.google.com", paused = false, stage = "meeting", invalidated = false, current, state } = {}) {
-  const context = {
-    location: { hostname: host, href: "https://" + host + "/test" },
-    window: { tactiq: { content: { invalidated, store: { getState: () => state ?? { transcriptions: { current: current ?? { room: { id: "room", meetingTitle: "Demo", isPaused: paused, detectedMeetingStage: stage, blocks: [block] } } } } } } } },
-  };
-  return JSON.parse(JSON.stringify(vm.runInNewContext(`(${readTactiq.toString()})(${JSON.stringify(meetingId)})`, context)));
+function inspect(params, { host = "meet.google.com", path = "/abc-defg-hij", framed = false } = {}) {
+  const window = {}; window.top = framed ? {} : window;
+  return JSON.parse(JSON.stringify(vm.runInNewContext(`(${readCaptions.toString()})(${JSON.stringify(params)})`, {
+    location: { hostname: host, pathname: path }, window,
+    get document() { throw Error("DOM must not be read for rejected targets"); },
+  })));
 }
-test("uses the specific Tactiq isolated world", () => {
-  assert.equal(TACTIQ_CONTEXT, "chrome-extension://fggkaccpbmombhnjkjokndojfgagejfb");
+test("no foreign extension context or Tactiq store access remains", () => {
+  assert.ok(!readCaptions.toString().includes("chrome-extension://"));
+  assert.ok(!readCaptions.toString().includes("window.tactiq"));
 });
-for (const host of ["meet.google.com", "app.zoom.us", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]) {
-  test("reads post-processed captions on " + host, () => {
-    const result = inspect("room", { host });
-    assert.equal(result.status, "live");
-    assert.equal(result.meetingId, "room");
-    assert.deepEqual(result.blocks, [block]);
-    assert.ok(result.platform);
+for (const host of ["app.zoom.us", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]) {
+  test("unimplemented platform fails before reading DOM: " + host, () => {
+    assert.equal(inspect({ action: "discover" }, { host }).code, "PLATFORM_NOT_IMPLEMENTED");
   });
 }
-test("meeting picker metadata never includes transcript text or account state", () => {
-  const result = inspect(null);
-  assert.equal(result.status, "ready");
-  assert.deepEqual(result.meetings, [{ id: "room", title: "Demo" }]);
-  assert.ok(!JSON.stringify(result).includes("hello"));
-});
-test("paused or unknown pause state cannot release any blocks", () => {
-  for (const paused of [true, undefined, null, "false"]) {
-    const result = inspect("room", { current: { room: { id: "room", isPaused: paused, detectedMeetingStage: "meeting", blocks: [block] } } });
-    assert.notEqual(result.status, "live");
-    assert.equal(result.blocks, undefined);
+test("unsupported host, wrong URL, iframe and mismatched meeting fail closed", () => {
+  for (const [params, options, code] of [
+    [{ action: "discover" }, { host: "meet.google.com.evil.example" }, "UNSUPPORTED_HOST"],
+    [{ action: "discover" }, { path: "/" }, "NOT_MEETING_PAGE"],
+    [{ action: "discover" }, { framed: true }, "UNSUPPORTED_FRAME"],
+    [{ action: "read", meetingId: "other" }, {}, "MEETING_CHANGED"],
+  ]) {
+    const result = inspect(params, options);
+    assert.equal(result.code, code); assert.equal(result.blocks, undefined);
   }
 });
-test("meeting end, invalidation, context change, or missing selection fail closed", () => {
-  for (const options of [{ stage: "left" }, { invalidated: true }, { host: "evil.example" }, { current: {} }, { state: {} }]) {
-    const result = inspect("room", options);
-    assert.notEqual(result.status, "live");
-    assert.equal(result.blocks, undefined);
-  }
-});
-test("extracts only selected meeting and whitelists fields", () => {
-  const result = inspect("room", { current: {
-    room: { id: "room", isPaused: false, detectedMeetingStage: "meeting", blocks: [{ ...block, secret: "no" }] },
-    other: { id: "other", isPaused: false, detectedMeetingStage: "meeting", blocks: [{ ...block, transcript: "private other meeting" }] },
-  } });
-  assert.deepEqual(result.blocks, [block]);
-  assert.ok(!JSON.stringify(result).includes("secret"));
-  assert.ok(!JSON.stringify(result).includes("private other"));
-});
-test("malformed and overlarge snapshots do not silently truncate", () => {
-  for (const blocks of [[{ ...block, transcript: {} }], [{ ...block, messageId: "" }], [{ ...block, speakerName: "" }], Array.from({ length: 100 }, () => ({ ...block, transcript: "x".repeat(32768) })), Array.from({ length: 4001 }, () => block)]) {
-    const result = inspect("room", { current: { room: { id: "room", isPaused: false, detectedMeetingStage: "meeting", blocks } } });
-    assert.equal(result.status, "unsupported");
-    assert.equal(result.blocks, undefined);
-  }
+test("reset is metadata-only even when navigation moved to an unsupported host", () => {
+  assert.deepEqual(inspect({ action: "reset", captureId: "expired" }, { host: "evil.example" }), { status: "idle" });
 });

@@ -43,6 +43,24 @@ test("pause freezes retry and skips the paused interval on resume", async () => 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].updates[0].transcript, "new after resume");
 });
+test("resume baselines immediately while a pre-pause batch is still in flight", async () => {
+  const sent = []; let release;
+  const stream = new CaptionStream(payload => {
+    sent.push(payload);
+    return sent.length === 1 ? new Promise(r => { release = r; }) : Promise.resolve();
+  });
+  stream.start(snapshot([]));
+  const pending = stream.update(snapshot([b("allowed before pause")]));
+  await stream.update({ status: "paused" });
+  const paused = b("private paused speech", 1, "paused");
+  await stream.update(snapshot([paused]));
+  release(); await pending;
+  await stream.update(snapshot([paused, b("first new after resume", 1, "fresh")]));
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0].sessionId, sent[1].sessionId);
+  assert.equal(sent[1].sequence, 1);
+  assert.deepEqual(sent[1].updates.map(block => block.transcript), ["first new after resume"]);
+});
 test("stop or context loss never auto-restarts; meeting mismatch fails closed", async () => {
   const sent = [];
   const stream = new CaptionStream(async payload => sent.push(payload));

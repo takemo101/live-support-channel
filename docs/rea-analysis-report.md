@@ -8,7 +8,7 @@
 
 `background.js` と `googlemeet.inline.js` は解析できたが、約2 MBの `content.js` はワーカーヒープ上限で解析できなかった。イベント、Redux相当の状態、一時停止、外部メッセージ制限の具体的な意味は、配布コードの直接確認と公式資料の調査で補った。
 
-最終的な試作は、生の字幕イベントを無条件転送せず、**Tactiqの処理済み状態を読取り、一時停止を尊重してClaude Codeへ更新を送る**構成になった。実Chrome・実会議・Claude Code本体をつないだ動作は未検証である。
+初期試作（v0.3.1まで）はTactiqの処理済み状態を読む設計だったが、後に**Chromeの別拡張contextアクセス制限で失敗する**ことが判明した。v0.4.0ではその経路を削除し、独立した**Meet標準字幕DOM reader**へ変更した。Tactiqは不要、Zoom／Teamsの取得は未実装。現在の取得仕様は [SPEC.md](../SPEC.md)、公開DOM候補と制限は [native-captions.md](native-captions.md) を参照。実会議・実モデルの全経路は未検証である。
 
 ## 1. 調べたかったこと
 
@@ -78,7 +78,18 @@ npx -y rea-agents@6.7.0 analyze-javascript-application "$APP_DIR" \
 | Graph coverage | **partial** |
 | CLI終了コード | 0 |
 
-グラフには `storage` 23ノード、`endpoint` 7ノード、`worker` 2ノード等があった。これは**ノード数であり、Tactiq固有機能数・通信先ホスト数・実行済み処理数ではない**。同梱ライブラリ由来の情報も含む。
+### 2026-10-20：各サービスadapterの追加解析
+
+同じREA 6.7.0でmanifest、`googlemeet.inline.js`、`msteams.inline.js`、`zoom.inline.js`、`rtcinjector.js`を選択し、heap 1024 MiB／semantic nodes 6000（file当たり2000）／timeout 90000 msで実際に再解析した。
+
+- Evidence：`ev_2a89b822e2b09c8197ee1a1e66f4313a67dfd7760d2ba8a287dc811fffe62bd5`。
+- JavaScript 4ファイル解析、skip 0、構文解析失敗0。427,594 bytes、134,736 AST nodes、37 findings。
+- 選択外59ファイル。semantic budget上限がありcoverageはpartial。
+- `content.js` は対象外であり、上のheap制約を解消した結果ではない。
+
+adapterの通信hookやprivate state依存は配布コードの直接確認で補った。REAの4ファイル解析は、4サービスの取得実装や実会議検証を意味しない。独立readerではこれらのprivate通信hookを移植せず、表示字幕DOMを候補として別途調査した。
+
+初回のグラフには `storage` 23ノード、`endpoint` 7ノード、`worker` 2ノード等があった。これは**ノード数であり、Tactiq固有機能数・通信先ホスト数・実行済み処理数ではない**。同梱ライブラリ由来の情報も含む。
 
 例えば、`background.js` のGraphQL mutation `UpdateUserSetting` はAST上の観測として記録された。一方、`mp_optout` は `call:v.cookie.get` に由来するlow-confidenceのendpoint候補だった。後者をそのまま「外部送信先」と判断してはいけない。観測と推論の区別が、出力を読むうえで重要だった。
 
@@ -135,13 +146,13 @@ minify済みファイルの文字列検索だけでは、SDK内部コードと�
 | `MCP Connector` とTeam planの文言がある | 配布コードの文字列・周辺処理の直接確認 | 公式MCPの調査を優先した |
 | 公式MCPはHTTP/OAuthで会議を読める | [Tactiq公式ヘルプ](https://help.tactiq.io/en/articles/14883619-connecting-tactiq-mcp-server) | 会議後の読取りなら第一候補になった |
 | 公式MCPの会議中ストリーミング仕様は確認できなかった | 公式資料の調査範囲 | 公式MCPをリアルタイム配信保証とは扱わなかった |
-| 別拡張contextを指定できる／Claudeへ通知をpushできる | Chrome DevTools・Claude Code Channelsの公式資料 | 補助DevTools拡張と一方向channelを実装した |
+| context指定パラメータがある／Claudeへ通知をpushできる | DevTools・Channels公式資料。当初は別拡張contextのアクセス制限を見落とした | 初期設計は失敗。後に通常page contextの独立DOM readerへ変更、一方向channelは再利用 |
 
-公式MCPの最低プランには、Tactiqヘルプの「Team以上」と料金ページの「Business beta」という不一致もあった。契約条件の判断は静的コードだけではできず、購入や権限変更は行っていない。
+当初は公式MCPのプラン表記に不一致があった。後続の公式ヘルプ調査ではFree／Proは検索・一覧、Team以上は詳細・全文と区別される。ただし進行中会議の増分取得は公開仕様で確認できず、プラン変更でリアルタイム取得できるとは判断していない。購入や権限変更は行っていない。
 
 ## 6. 解析から実装へどうつながったか
 
-実装は次の構成になった。
+以下は**初期に目指した構成（v0.3.1まで、別拡張contextアクセスで失敗）**であり、現行の動作保証ではない。
 
 ```text
 選択した会議のTactiq処理済み状態
@@ -157,7 +168,9 @@ minify済みファイルの文字列検索だけでは、SDK内部コードと�
 - 非公開APIの認証情報抽出や拡張の改造は行わない。
 - 会議本文を操作指示・ツール権限の承認と扱わない。
 
-対応するコードは [`extension/snapshot.js`](../extension/snapshot.js)、[`extension/stream.js`](../extension/stream.js)、[`extension/panel.js`](../extension/panel.js)、[`server/bridge.js`](../server/bridge.js)、[`server/main.js`](../server/main.js)。詳細な運用とデータ形式は [`SPEC.md`](../SPEC.md) を参照。
+**現在のv0.4.0では**「Meet標準字幕DOM → 通常page eval → 約1秒取得／約5秒差分送信 → 既存HTTP／Channels」を実装した。専用のpause／resume／stopが必要で、Tactiqのpauseとは連動しない。実Chrome合成DOMでは検証したが、実Meetの互換性は未確認である。
+
+現在のコードは [`extension/snapshot.js`](../extension/snapshot.js)、[`extension/stream.js`](../extension/stream.js)、[`extension/panel.js`](../extension/panel.js)、[`server/bridge.js`](../server/bridge.js)、[`server/main.js`](../server/main.js)。詳細な運用とデータ形式は [`SPEC.md`](../SPEC.md) を参照。
 
 ## 7. 検証済み／未検証
 
@@ -171,8 +184,8 @@ minify済みファイルの文字列検索だけでは、SDK内部コードと�
 
 ### 未検証
 
-- 実Chromeから実Tactiqのisolated worldを読むAPI境界。
-- Meet／Zoomブラウザ／Teamsブラウザの実会議でのschema・frame配置。
+- 現在のMeet標準字幕DOM、実DevTools接続から実会議までの互換性。
+- Zoom／Teamsの独立readerは未実装。旧Tactiq private context経路はアクセス拒否のため削除済み。
 - Claude Code本体が開発channelを許可し、実モデルへ取り込むこと。
 - 長時間運用、AIによる要約やプロジェクト判断の精度・遅延・費用。
 

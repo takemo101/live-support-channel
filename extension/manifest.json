@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Tactiq Live → Claude Code",
-  "version": "0.2.0",
-  "description": "Explicitly forward the selected Tactiq meeting's live transcript through a local Claude Code channel.",
+  "name": "Live Captions → Claude Code (Meet experimental)",
+  "version": "0.4.0",
+  "description": "Experimental Google Meet native-caption reader with explicit start, pause and stop. Tactiq is not required.",
   "minimum_chrome_version": "125",
   "devtools_page": "devtools.html",
   "host_permissions": [

@@ -1,4 +1,4 @@
-chrome.devtools.panels.create("Tactiq Live", "", "panel.html", panel => {
+chrome.devtools.panels.create("Live Captions", "", "panel.html", panel => {
   let panelWindow;
   panel.onShown.addListener(window => { panelWindow = window; });
   panel.onHidden.addListener(() => {

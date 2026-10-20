@@ -10,7 +10,7 @@ import { once } from "node:events";
 import { runtimeDirectory } from "../server/runtime.js";
 import { prepareToken } from "../server/token.js";
 
-const help = `Tactiq Live — one receiving Claude Code project at a time
+const help = `Live Captions (Meet experimental) — one receiving Claude Code project at a time
   tactiq-live setup    Install Chrome extension assets in your user directory
   tactiq-live claude   Launch a meeting-enabled Claude Code in the current project
   tactiq-live token    Print the pairing token locally (never share it)
