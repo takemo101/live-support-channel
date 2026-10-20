@@ -81,8 +81,9 @@
       const items = results(event.data, s.stats); if (!items) return;
       for (const raw of items) { ingest(s, raw); if (life.current !== s) return; }
     } catch (error) {
-      if (life.current === s && typeof error?.reason === "string") {
-        s.stats.reason = error.reason;
+      const reason = typeof error?.reason === "string" ? error.reason : error?.code ? null : "error:" + String(error?.name ?? "unknown").toLowerCase().replace(/[^a-z]/g, "").slice(0, 24);
+      if (life.current === s && reason) {
+        s.stats.reason = reason;
         if (probe && typeof probe === "object") s.stats.itemKeys = Object.keys(probe).filter(k => /^[A-Za-z0-9_]{1,24}$/.test(k)).slice(0, 16);
       }
       if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
