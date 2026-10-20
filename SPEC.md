@@ -1,6 +1,6 @@
 # Tactiq Live → Claude Code：使い方と仕様
 
-バージョン：0.3.0。最終更新：2026-10-19。
+バージョン：0.3.1。最終更新：2026-10-19。
 
 > **手動導入前の試作です。** ダミーデータ、Chrome API境界の模擬、実ローカルHTTP／MCP stdio通信は自動テスト済みですが、実Chrome・実Tactiq・実Claude Codeをつないだ動作は未検証です。実会議で利用可能と判断する前に、非機密のテスト会議で確認してください。
 
@@ -66,6 +66,8 @@ tactiq-live setup
 
 ビルド・bundling・install scriptは不要です。配布物はbin、server、extension、skills、`.claude-plugin`と公開ドキュメントに限定し、実行データ・第三者配布物・解析scratchは含めません。
 
+ソースをcloneした環境では、Node.js／npmとjustを用意し、`just install` でも導入できます。`npm install --global --ignore-scripts --install-links .` でcheckoutから独立したコピーを配置し、インストール先CLIの `setup` を実行します。`just uninstall` はnpmグローバルCLIのみ削除し、ランタイム保存先とChrome登録は保持します。インストールが失敗した場合はsetupへ進みません。justfileはdotenvを自動読込みしません。
+
 ### 3.2 任意のプロジェクトでClaude Codeを起動する
 
 ```bash
@@ -82,7 +84,7 @@ CLIは作業ディレクトリを保ったまま、インストールされたNo
 - `--settings`：hooksとSkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories`を有効にし、.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先をRead denyにする。
 - `--plugin-dir <インストール先>`：このセッションだけに `.claude-plugin/plugin.json` と `skills/meeting/SKILL.md` を読み込む。グローバルSkillsやプロジェクトへコピーしない。
 - `--append-system-prompt-file <Skillの絶対パス>`：同じSkillを常設方針として追加し、初期ユーザー依頼で会議モードを開始。字幕からの自動Skill呼出しには依存しない。
-- `--dangerously-load-development-channels`：自作channelを試すための明示的な開発用許可。認証・ツール権限の迂回のためには使わない。
+- `--dangerously-load-development-channels`：自作channelを試すための明示的な開発用許可。認証・ツール権限の迂回のためには使わない。可変長のchannel指定と開始プロンプトは `--` で区切り、開始文がchannel名へ吸収されないようにする。
 
 ホーム／filesystem rootをプロジェクトとして起動することは拒否します。これらのflagはOSサンドボックスではありません。ファイルに埋め込まれた秘密を完全に検出する機能もないため、読み取ってよいプロジェクトでのみ使い、managed設定と実際の拒否動作を受入確認してください。
 

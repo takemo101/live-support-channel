@@ -30,6 +30,16 @@ test("launch enables only Skill and project read tools with session-local plugin
   assert.equal(args[args.indexOf("--append-system-prompt-file") + 1], join(root, "skills/meeting/SKILL.md"));
   assert.match(args.at(-1), /会議サポート/);
 });
+test("startup prompt is separated from the variadic development-channel option", async t => {
+  const { result, args } = await launch(t);
+  assert.equal(result.status, 0, result.stderr);
+  const channel = args.indexOf("--dangerously-load-development-channels");
+  const separator = args.indexOf("--");
+  assert.ok(separator > channel, "startup prompt needs -- to end the variadic channel list");
+  assert.deepEqual(args.slice(channel + 1, separator), ["server:tactiq-live"]);
+  assert.equal(args.slice(separator + 1).length, 1);
+  assert.match(args[separator + 1], /^会議サポートモードを開始してください/);
+});
 test("read-only session disables hooks and fences secret/runtime files", async t => {
   const { result, args, runtime } = await launch(t);
   assert.equal(result.status, 0, result.stderr);

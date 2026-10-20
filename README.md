@@ -19,6 +19,17 @@ tactiq-live setup
 
 Chrome設定やClaudeのユーザー設定を勝手に変更することはありません。Chrome Web Storeへ公開した拡張ではないため、この初回読み込みは手動です。
 
+## ソースからインストール（just）
+
+このリポジトリを手元にcloneした場合は、Node.js／npmと[just](https://just.systems/)を用意して次を実行できます。
+
+```bash
+just install
+just uninstall
+```
+
+`install` は手元のソースをnpmグローバル領域へ**独立したコピー**として配置し、そのCLIの `setup` でChrome拡張を準備します。Chromeへの手動読み込みは前述と同じです。`uninstall` はグローバルCLIだけを削除し、トークン・拡張の保存先とChromeの登録は残します。`just` 単体ではコマンド一覧を表示します。
+
 ## 各プロジェクトで使う
 
 受信したいプロジェクトへ移動して起動します。

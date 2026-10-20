@@ -119,7 +119,7 @@ async function main() {
       "--tools", "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
       "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
       "--append-system-prompt-file", skillPath,
-      "--dangerously-load-development-channels", "server:tactiq-live",
+      "--dangerously-load-development-channels", "server:tactiq-live", "--",
       "会議サポートモードを開始してください。まずこのプロジェクトの必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、今の話・相手の問い・口にできる返答案・必要な指摘や提案を日本語で短く更新してください。",
     ], { stdio: "inherit", env: process.env });
     try {
