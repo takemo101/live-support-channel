@@ -27,8 +27,9 @@
 ## Git と PR
 
 - Git の書込みには `but`（GitButler）を使い、インストール済みの but skill に従う。raw Git の add・commit・checkout・merge・rebase・push などへ逃げない。読取り専用の調査は許す。GitButler の workspace の reset・切替・target 変更をしない。
-- 統合先は GitHub の既定ブランチ `trunk`（リポジトリは `takemo101/tactiq-live-channel`）。変更は専用の branch に分け、`but commit -b <branch> -m <message>` で commit し、`but push <branch>`（`origin`）で push する。`but pr` はこのリポジトリのフォージを判定できないため、PR の作成とマージは `gh` で行う。
-- PR を依頼されたら、対象の検証 → commit → push → PR 作成 → PR の target・head・files と mergeability の確認 → 通常マージまでを、段階ごとの再承認なしで行う。マージは `gh pr merge <number> --repo takemo101/tactiq-live-channel --merge --match-head-commit <sha>` のように、確認した head に束縛する。admin・force・保護の迂回は禁止する。PR の依頼がない変更を、自動で commit・push・PR 化しない。
+- 統合先は GitHub の既定ブランチ `trunk`（リポジトリは `takemo101/live-support-channel`）。変更は専用の branch に分け、`but commit -b <branch> -m <message>` で commit し、`but push <branch>`（`origin`）で push する。`but pr` はこのリポジトリのフォージを判定できないため、PR の作成とマージは `gh` で行う。
+- **`but push` はスタックの下層の古い `trunk` ブランチも push し、リモートの `trunk` を巻き戻すことがある**（実際に起きた）。push の前に `but push -d` で対象を確認し、`trunk` が含まれる場合は `but push` を使わず、ユーザーに相談する。`but branch delete` と `but discard` は、未追跡・Git 対象外のファイル（`artifacts/`・`research/`・`node_modules/`）まで消すので使わない（消した場合は oplog のスナップショットの tree から取り出せる）。
+- PR を依頼されたら、対象の検証 → commit → push → PR 作成 → PR の target・head・files と mergeability の確認 → 通常マージまでを、段階ごとの再承認なしで行う。マージは `gh pr merge <number> --repo takemo101/live-support-channel --merge --match-head-commit <sha>` のように、確認した head に束縛する。admin・force・保護の迂回は禁止する。PR の依頼がない変更を、自動で commit・push・PR 化しない。
 
 ## 設計と実装
 

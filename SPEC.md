@@ -1,17 +1,17 @@
-# Live Captions → Claude Code：使い方と仕様
+# Live Support Channel：使い方と仕様
 
 バージョン：0.7.0。最終更新：2026-10-20。
 
-> **Meet字幕通信の試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire、実HTTP／MCP通知を検証。実Meet／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Teams（通信の観測のみ）とZoom（画面字幕のDOM読取り）は試験版で実機未検証です。
+> **試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire・合成した字幕DOM、実HTTP／MCP通知を検証。実Meet・Teams・Zoom／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Meetは字幕通信の観測、TeamsとZoomは画面字幕のDOM読取りです。
 
 ## 1. 目的と範囲
 
-Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「要点・相手の問い・短い返答案・根拠付きの事業／技術の提案」を表示します。Tactiqは不要。CLI名 `live-support`、channel名、保存先は互換性のため維持します。
+Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「要点・相手の問い・短い返答案・根拠付きの事業／技術の提案」を表示します。Tactiqは不要。CLI名・channel名は `live-support`、保存先は `~/.live-support`、npmパッケージとGitHubリポジトリは `live-support-channel`。
 
 実装範囲：
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
-- Meet限定の参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。
+- Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。Teams・Zoom：利用者が表示させた字幕のDOMだけを読むreader（話者は表示名）。
 - 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
 - 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
@@ -27,21 +27,23 @@ Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッ�
 | --- | --- |
 | Node.js | 22以上（検証24.15.0） |
 | Chrome | 125以上、DevTools使用（ローカルRTC検証155） |
-| Meet | httpsのmeet.google.com会議top frame。参加前にフック準備、標準字幕ON |
+| Meet | httpsのmeet.google.com会議top frame（`/abc-defg-hij` または `/meet/abc-defg-hij`）。参加前にフック準備、標準字幕ON |
+| Teams | https の teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame。ライブキャプションを表示 |
+| Zoom | https の app.zoom.us Webクライアントの会議ページ（`/wc/<番号>/…`）。字幕を画面に表示 |
 | UI言語 | 字幕ボタンの判定は日本語／英語。その他は未対応として停止 |
 | Tactiq | 不要。他字幕拡張との同居は未確認 |
 | Claude Code | Channels・restricted・セッションplugin・Skill Shell前処理無効化に対応。CLI確認2.1.302／2.1.303 |
 | 認証／port | Channelsを許可されたAnthropic認証・組織設定、`127.0.0.1:43821` が使用可能 |
 | OS | 0700／0600とsymlink拒否を使用。検証はmacOS |
 
-`zoom.us` とサブドメイン、`teams.microsoft.com`／`teams.live.com`／`teams.cloud.microsoft` は識別しますが、本文を読まず `PLATFORM_NOT_IMPLEMENTED` を返します。iframeの自動探索、ログイン・有料機能・組織ポリシーの回避はしません。
+`app.zoom.us` 以外の `zoom.us` とサブドメインは識別しますが、本文を読まず `PLATFORM_NOT_IMPLEMENTED` を返します。iframeの自動探索、ログイン・有料機能・組織ポリシーの回避はしません。
 
 Channelsはresearch previewです。公式資料ではBedrock／GoogleのAgent Platform／Microsoft Foundryは非対応で、組織管理者の有効化が必要な場合があります。提供条件は変更され得ます。
 
 ## 3. 導入・起動
 
 ```bash
-npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
+npm install --global --ignore-scripts github:takemo101/live-support-channel
 live-support setup
 ```
 
@@ -73,9 +75,9 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 ## 4. 会議での操作
 
 1. 参加者同意、組織規程、Anthropic側のデータ取扱いを確認する。
-2. **会議参加前**に拡張を読み込み、Meetだけのサイトアクセスを本人が許可する。更新時はMeetタブを再読み込みしてから参加する。
-3. Meet内の標準字幕をONにする。Chrome全体の自動字幕ではない。
-4. そのタブのDevTools → **Live Captions**。パネルを開くと準備を自動確認し、会議は1件なら自動選択する。token入力 → 同意 → 転送開始（tokenは受信サーバーが受理した後、ブラウザ終了まで `chrome.storage.session` に記憶。「再確認」で再検査）。
+2. **会議参加前**に拡張を読み込み、サイトアクセスを本人が許可する。更新時は会議タブを閉じて開き直してから参加する（Meetは参加前の準備が必要）。
+3. 会議側で字幕をONにする（Meetは標準字幕、Teamsはライブキャプション、Zoomは字幕を画面に表示）。Chrome全体の自動字幕ではない。
+4. そのタブのDevTools → **Live Support**。パネルを開くと準備を自動確認し、会議は1件なら自動選択する。token入力 → 同意 → 転送開始（tokenは受信サーバーが受理した後、ブラウザ終了まで `chrome.storage.session` に記憶。「再確認」で再検査）。
 5. パネルを表示したまま使う。起動直後から参照するプロジェクトも非機密の範囲を選ぶ。
 
 準備中・確認操作はURL、字幕ボタン、接続／チャネルの状態・件数だけを扱い、字幕本文や会議タイトルは読まない。認証済み /health と同意の確認後に取得を開始する。接続が複数で特定できない場合は開始しない。

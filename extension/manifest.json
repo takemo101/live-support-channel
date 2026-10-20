@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Live Captions → Claude Code (Meet experimental)",
+  "name": "Live Support (Meet / Teams / Zoom, experimental)",
   "version": "0.7.0",
-  "description": "Experimental consent-controlled Meet caption data-channel reader. Prepare before joining; no Tactiq or audio recording.",
+  "description": "Experimental consent-controlled caption reader for Meet, Teams and Zoom that feeds a local Claude Code. Prepare before joining; no Tactiq or audio recording.",
   "minimum_chrome_version": "125",
   "devtools_page": "devtools.html",
   "permissions": ["storage"],

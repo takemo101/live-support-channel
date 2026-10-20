@@ -29,7 +29,7 @@ test("leaving the DevTools panel signals a stop", async () => {
   const source = await readFile(new URL("../extension/devtools.js", import.meta.url), "utf8");
   vm.runInNewContext(source, {
     chrome: { devtools: { panels: { create(name, _icon, page, callback) {
-      assert.equal(name, "Live Captions"); assert.equal(page, "panel.html");
+      assert.equal(name, "Live Support"); assert.equal(page, "panel.html");
       callback({ onShown: { addListener(fn) { onShown = fn; } }, onHidden: { addListener(fn) { onHidden = fn; } } });
       callbackCalled = true;
     } } } },

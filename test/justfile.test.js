@@ -14,7 +14,7 @@ async function fixture(t) {
   await mkdir(bin); await mkdir(runtime);
   await writeFile(join(runtime, "keep"), "preserve user data");
   const record = join(temp, "commands.jsonl"), setup = join(temp, "setup.json");
-  const packageBin = join(global, "live-support/bin");
+  const packageBin = join(global, "live-support-channel/bin");
   await mkdir(packageBin, { recursive: true });
   await writeFile(join(packageBin, "live-support.js"), 'require("node:fs").writeFileSync(process.env.JUST_SETUP,JSON.stringify(process.argv.slice(2)));');
   const npm = join(bin, "npm");
@@ -49,7 +49,7 @@ test("failed just install does not run setup", { skip: !available }, async t => 
 test("just uninstall removes only the npm package and preserves runtime data", { skip: !available }, async t => {
   const f = await fixture(t), result = f.run("uninstall");
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(await f.calls(), [["uninstall", "--global", "live-support"]]);
+  assert.deepEqual(await f.calls(), [["uninstall", "--global", "live-support-channel"]]);
   assert.equal(await readFile(join(f.runtime, "keep"), "utf8"), "preserve user data");
   await assert.rejects(readFile(f.setup, "utf8"));
 });

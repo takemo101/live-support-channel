@@ -1,9 +1,10 @@
 {
-  "name": "live-support",
+  "name": "live-support-channel",
   "version": "0.7.0",
+  "description": "Feed Meet, Teams and Zoom captions to a local Claude Code (Channels) for live meeting support",
   "bin": { "live-support": "bin/live-support.js" },
   "files": ["bin/", "server/", "extension/", "skills/", ".claude-plugin/", "README.md", "SPEC.md", "docs/rea-analysis-report.md", "docs/native-captions.md"],
-  "repository": { "type": "git", "url": "git+https://github.com/takemo101/tactiq-live-channel.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/takemo101/live-support-channel.git" },
   "private": true,
   "type": "module",
   "engines": {

@@ -1,24 +1,24 @@
-# Live Captions → Claude Code
+# Live Support Channel
 
-**Google Meetの標準字幕**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「要点・相手の問い・口にできる返答案・事業／技術の提案」を短く出す試作です。**Tactiqは不要**です。CLI名 `live-support` と保存先は互換性のため維持しています。受信先は一度に1プロジェクトです。
+**Google Meet・Microsoft Teams・Zoom（Webクライアント）の字幕**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「要点・相手の問い・口にできる返答案・事業／技術の提案」を短く出す試作です。**Tactiqは不要**です。CLIは `live-support`、受信先は一度に1プロジェクトです。
 
 | 取得対象 | 状態 |
 | --- | --- |
-| Google Meetブラウザ版 | 字幕DataChannel readerを実装。**試験版・実会議の互換性は未確認** |
+| Google Meetブラウザ版 | 字幕DataChannel（RTC）の観測。**試験版・実会議の互換性は未確認** |
 | Microsoft Teamsブラウザ版 | 画面に表示されたライブキャプションの**読取りのみ**（Teams側でライブキャプションをONにする）。**試験版・実Teamsでの互換性は未確認** |
 | Zoom Webクライアント（app.zoom.us） | **画面に表示された字幕のDOMを読む**（Zoom側で字幕を表示する）。**試験版・実Zoomでの互換性は未確認**。デスクトップ版は対象外 |
 | デスクトップ版・音声録音・新規ASR | 対象外 |
 
 Node.js 22以上、Chrome 125以上、Channelsと `--restricted` に対応したClaude Codeが必要です（CLI確認版2.1.302／2.1.303）。検証環境はmacOSです。
 
-> **実会議では未検証です。** 隔離した実ChromeのローカルWebRTC接続で、合成字幕→デコード→実HTTP／MCP通知を検証しています。これは現在のMeetの通信形式、Chrome拡張の実ロード、Claude／Haikuの応答の保証ではありません。まず非機密のテスト会議で試してください。
+> **実会議では未検証です。** 隔離した実ChromeのローカルWebRTC接続で、合成字幕→デコード→実HTTP／MCP通知を検証しています（Teams・Zoomは合成した字幕DOM）。これは現在のMeet・Teams・Zoomの通信形式やDOM構造、Chrome拡張の実ロード、Claude／Haikuの応答の保証ではありません。まず非機密のテスト会議で試してください。
 
 ## インストール（初回）
 
 npmレジストリではなく、この公開GitHubリポジトリからインストールします。
 
 ```bash
-npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
+npm install --global --ignore-scripts github:takemo101/live-support-channel
 live-support setup
 ```
 
@@ -54,12 +54,12 @@ live-support token
 
 **tokenをGitHubやチャットへ貼らないでください。** 次の順で操作します。
 
-1. **会議参加前**に補助拡張とMeetへのサイトアクセスを準備する。更新後はMeetタブを再読み込みしてから参加する。
-2. Meet内の**標準字幕をON**にする。Chrome全体の自動字幕ではありません。
-3. そのタブのDevTools → `Live Captions` を開きます（準備は自動確認、会議は1件なら自動選択）。tokenを貼り、同意にチェックして「転送開始」。tokenは受信サーバーが受理した後、ブラウザを閉じるまで記憶されます（`chrome.storage.session`、ディスクに保存しません）。
+1. **会議参加前**に補助拡張とサイトアクセスを準備する。更新後は会議タブを**閉じて開き直し**てから参加する（Meetは参加前に準備されている必要があります）。
+2. 会議側で字幕をONにする：Meetは**標準字幕**、Teamsは**ライブキャプション**、Zoomは**字幕を画面に表示**。Chrome全体の自動字幕ではありません。
+3. そのタブのDevTools → `Live Support` を開きます（準備は自動確認、会議は1件なら自動選択）。tokenを貼り、同意にチェックして「転送開始」。tokenは受信サーバーが受理した後、ブラウザを閉じるまで記憶されます（`chrome.storage.session`、ディスクに保存しません）。
 4. パネルを表示したまま使う。上部のバッジで「取得中／自動復旧中／一時停止中／停止（要確認）」が分かります。
 
-- 既存の字幕チャネルを観測し、必要時だけ会議接続に自分の字幕チャネルを追加してACKを返します。字幕ONの強制や元の通信内容の変更はしません。**例外は実験オプション「字幕ボタンがOFFでも開始」（既定OFF）だけ**で、ONにするとMeetの制御チャネル（media-session）へ字幕設定コマンドを1回書き込みます。Meet自身の送信は書き換えず、再試行もしません。Meetが送った字幕言語を一度観測できないと使えません。**実Meetでの動作は未確認**で、Tactiq 3.1.7185の静的解析で見えた形式に基づきます。字幕設定がMeet側に残る可能性があります。
+- **Meet**：既存の字幕チャネルを観測し、必要時だけ会議接続に自分の字幕チャネルを追加してACKを返します。字幕ONの強制や元の通信内容の変更はしません。**例外は実験オプション「字幕ボタンがOFFでも開始」（既定OFF）だけ**で、ONにするとMeetの制御チャネル（media-session）へ字幕設定コマンドを1回書き込みます。Meet自身の送信は書き換えず、再試行もしません。Meetが送った字幕言語を一度観測できないと使えません。**実Meetでの動作は未確認**で、Tactiq 3.1.7185の静的解析で見えた形式に基づきます。字幕設定がMeet側に残る可能性があります。
 - 約1秒のsnapshot／lease更新。送信はパネルの「転送のまとめ方」で選びます：**発話の区切りごと**（既定。字幕が3秒静かになったら、または最も古い未送信の変化が45秒に達したら）、約30秒ごと、約5秒ごと。失敗時は5秒空けて再送します。通信を待つ間も取得は継続します。
 - 開始／再開後、**各話者の最初の発話ID以前を修正後も除外し、次IDから**送ります。最初の質問や長い発話が届かない場合があります。
 - 生成時刻は確認できず、受信時刻とID順序を使います。遅配や履歴を完全に見分ける保証はありません。
@@ -68,7 +68,7 @@ live-support token
 - `/meeting` スキルは最初に**本人の表示名を確認**し、本人の発言は要約・返答カード・引用に含めません。
 - **専用の一時停止・再開・停止**で制御します。Tactiqのpauseとは独立。未処理分を解放し、新しい本文に触れず、自分が追加したチャネルだけを閉じます。取消不能な処理最大1件が終わるまで新captureを拒否します。
 - 字幕OFF・未知形式・接続終了・ページ移動・パネル切替で停止します。heartbeat途絶（約2秒のlease失効）は本文を破棄したうえで、同じ会議へ自動復旧します。ただし失効中の字幕と復旧後の各話者の初回ID以前は欠落し、話者番号は振り直されます。手動の停止・一時停止後は自動再開しません。
-- 起動時に会議モードが始まり、必要なプロジェクト資料を読取り専用で確認します。字幕に重要な変化があると短いカードを更新します。5秒ごとのAI応答を保証する機能ではありません。
+- 起動時に会議モードが始まり、必要なプロジェクト資料を読取り専用で確認します。字幕に重要な変化があると短いカードを更新します。字幕のまとまりごとのAI応答を保証する機能ではありません。
 
 ### 会議中の支援
 
@@ -114,19 +114,26 @@ Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku live-support claude` と起動で
 - 自作Channelsには `--dangerously-load-development-channels server:live-support` の明示的な開発用許可が必要です。ランチャーが渡しますが、Claude側の認証・承認・組織制限を迂回しません。
 - Channelsはresearch previewです。Bedrock／GoogleのAgent Platform／Microsoft Foundryは非対応との公式記載があります。
 - HTTP 202はSDK通知の書出し成功であり、AIによる受領・理解・応答完了の保証ではありません。
-- Meetの非公開な `captions`／`captions_v2` の形式に依存します。字幕ボタンの判定は日本語／英語UIが対象。未知の形式や接続は停止し、字幕本文をDOMから読むfallback・チャット・fetch／WebSocket・別拡張の内部状態へfallbackしません（話者名の照合にだけ、画面に表示された字幕リストを読みます）。
-- Tactiq内部context経路と旧DOM readerは使用しません。Meet限定のサイトアクセスは追加しますが、全サイト・録音権限やChromeの安全機能無効化はしません。
+- Meetは非公開な `captions`／`captions_v2` の形式（字幕ボタンの判定は日本語／英語UIが対象）、TeamsとZoomは画面の字幕のDOM構造に依存し、変更されると停止します。未知の形式や接続は停止し、字幕本文をDOMから読むfallback・チャット・fetch／WebSocket・別拡張の内部状態へfallbackしません（話者名の照合にだけ、画面に表示された字幕リストを読みます）。
+- Tactiqの内部経路は使用しません。サイトアクセスはMeet・Teams・Zoomに限り、全サイト・録音権限やChromeの安全機能無効化はしません。
 - 停止時に処理中の読取り・送信、送信済みのデータは取り消せません。未送信分は破棄します。永続キュー・完全な議事録・再起動をまたぐexactly-once保証はありません。
 
 ## 更新・削除
 
-転送とランチャーを止めてから再インストールし、`live-support setup` を実行します。Chromeで補助拡張を再読み込みし、Meet限定のサイトアクセスを許可して、**Meetタブも参加前に再読み込み**してください。参加済みの接続を後から発見する保証はありません。拡張の保存先は同じです。
+転送とランチャーを止めてから再インストールし、`live-support setup` を実行します。Chromeで補助拡張を再読み込みし、サイトアクセスを許可して、**会議タブを閉じて開き直して**ください（Meetは参加前に）。参加済みのMeet接続を後から発見する保証はありません。拡張の保存先は同じです。
 
 ```bash
-npm uninstall --global live-support
+npm uninstall --global live-support-channel
 ```
 
 アンインストールは `~/.live-support/` とChromeの読み込み登録を自動削除しません。不要なら全プロセス停止後に本人が確認して削除してください。
+
+### 旧名（tactiq-live）からの移行
+
+1. `npm uninstall --global tactiq-live-channel` で旧CLIを削除し、上の手順で `live-support` を導入する。
+2. Chromeの `chrome://extensions` で旧 `~/.tactiq-live-channel/extension` の拡張を削除し、新しい `~/.live-support/extension` を読み込む。
+3. 旧 `~/.tactiq-live-channel/` は不要なら本人が確認して削除する（トークンは新しい保存先で作り直されます）。
+4. 環境変数は `LIVE_SUPPORT_RUNTIME_DIR`・`LIVE_SUPPORT_PORT`、MCPサーバー名とskillの呼び出しは `live-support`・`/live-support:meeting` に変わりました。
 
 ## 開発・資料
 
