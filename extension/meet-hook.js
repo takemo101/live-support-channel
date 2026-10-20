@@ -12,7 +12,7 @@
   let prepareError = null, decoding = null;
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
-  const currentMeeting = () => page.location.hostname === "meet.google.com" && page.location.protocol === "https:" && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(page.location.pathname)
+  const currentMeeting = () => page.location.hostname === "meet.google.com" && page.location.protocol === "https:" && /^\/(?:meet\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(page.location.pathname)
     ? `meet.google.com${page.location.pathname.replace(/\/$/, "")}` : null;
   function captionControl() {
     const buttons = [...page.document.querySelectorAll("button[aria-label]")].filter(b => b.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));

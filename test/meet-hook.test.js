@@ -444,3 +444,10 @@ test("the media-session observer is pass-through, label-scoped and keeps only nu
   assert.doesNotThrow(() => native.send("text frame"));
   assert.equal(native.sent.length, 3);
 });
+test("the hook identifies a meeting under /meet/<code> and rejects other paths", t => {
+  const f = fixture(t);
+  f.page.location.pathname = "/meet/abc-defg-hij";
+  const meta = f.command("discover"); assert.equal(meta.code, "READY");
+  assert.equal(JSON.parse(JSON.stringify(meta.meetings.map(m => m.id)))[0], "meet.google.com/meet/abc-defg-hij");
+  f.page.location.pathname = "/foo/abc-defg-hij"; assert.equal(f.command("discover").code, "NOT_MEETING_PAGE");
+});

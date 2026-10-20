@@ -10,7 +10,7 @@ export function readCaptions({ action = "discover", meetingId, captureId, previo
   if (location.protocol !== "https:" || (!meet && !teams && !zoom)) {
     return { status: "unavailable", code: /(^|\.)zoom\.us$/.test(host) ? "PLATFORM_NOT_IMPLEMENTED" : "UNSUPPORTED_HOST" };
   }
-  if (meet && !/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(location.pathname)) return { status: "ended", code: "NOT_MEETING_PAGE" };
+  if (meet && !/^\/(?:meet\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(location.pathname)) return { status: "ended", code: "NOT_MEETING_PAGE" };
   const zoomMeeting = zoom ? /^\/wc\/(\d{5,15})\// .exec(location.pathname) : null;
   if (zoom && !zoomMeeting) return { status: "ended", code: "NOT_MEETING_PAGE" };
   if (window !== window.top) return { status: "unavailable", code: "UNSUPPORTED_FRAME" };
