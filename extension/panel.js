@@ -1,5 +1,6 @@
 import { readCaptions } from "./snapshot.js";
 import { CaptionStream } from "./stream.js";
+import { describe, statistics } from "./diagnostics.js";
 
 // Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
 // "5" and "30" send on a fixed cadence in seconds. A failed send is retried after RETRY ms.
@@ -13,56 +14,6 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map(), signatures = new Map();
   const status = message => { el("status").textContent = message; };
-  const messages = {
-    CAPTIONS_OFF: "Meetの字幕がOFFです。Meetで字幕（CC）をONにして、「再確認」を押してください。",
-    CAPTION_CONTROL_NOT_FOUND: "Meetの字幕ボタンが見つかりません。表示言語が日本語／英語以外、または未対応の画面構成です。",
-    RTC_HOOK_NOT_READY: "Meet側の準備が未完了です。拡張を更新した場合は、Meetタブを再読み込みして会議に入り直してください（Meetへのサイトアクセス許可も確認）。",
-    RTC_CONNECTION_NOT_FOUND: "Meetの会議接続が見つかりません。会議に参加して字幕をONにしてから「再確認」を押してください。拡張は参加前に読み込まれている必要があります。",
-    RTC_CONNECTION_AMBIGUOUS: "会議接続を一意に特定できないため取得しません。",
-    RTC_PREPARE_FAILED: "通信フックを準備できません。他の字幕拡張との競合や管理ポリシーを確認してください。",
-    RTC_UNAVAILABLE: "このページでWebRTC接続を利用できません。",
-    RTC_RESOURCE_LIMIT: "接続の監視上限に達したため停止しました。非機密のテスト会議でページを再読み込みしてください。",
-    RTC_CONNECTION_CLOSED: "会議の接続が終了したため停止しました。会議に戻ってから「再確認」してください。",
-    CAPTURE_EXPIRED: "読取りが一時的に途切れました。同じ会議へ自動で復旧します。",
-    CAPTION_CHANNEL_CLOSED: "字幕チャネルが閉じたため停止しました。「再確認」から開始し直してください。",
-    MEDIA_SESSION_NOT_FOUND: "Meetの制御チャネルを特定できないため、字幕ボタンOFFでの開始はできません。Meetで字幕をONにするか、ページを再読み込みして参加し直してください。",
-    CAPTION_LANGUAGE_UNKNOWN: "Meetの字幕言語をまだ観測できていません。Meetの字幕設定で言語を一度選ぶか、字幕をONにしてください。",
-    CAPTION_ENABLE_FAILED: "字幕の開始指示を送れませんでした。再試行はしません。Meetで字幕をONにするか、ページを再読み込みしてください。",
-    CAPTION_SUBSCRIPTION_FAILED: "字幕チャネルを追加できません。標準字幕・組織設定・他の字幕拡張との競合を確認してください。",
-    CAPTION_FORMAT_UNKNOWN: "未対応の字幕通信形式です。本文を送らず停止しました。診断コードと件数だけを報告してください。",
-    CAPTION_BACKLOG_LIMIT: "字幕の処理待ち上限に達したため停止しました。",
-    CAPTION_DECODE_BUSY: "前の処理の終了を待っています。しばらくして「再確認」してください。解消しない場合は、テスト会議でページを再読み込みしてください。",
-    CAPTION_ACK_BACKLOG_LIMIT: "字幕の受信確認の送信待ち上限に達したため停止しました。通信状態を確認して再確認してください。",
-    CAPTION_SEQUENCE_UNKNOWN: "発話IDの順序を確認できないため停止しました。",
-    CAPTION_REVISION_CONFLICT: "同じ修正番号で本文が異なるため停止しました。",
-    CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
-    CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
-    PLATFORM_NOT_IMPLEMENTED: "ZoomはWebクライアント（app.zoom.us）だけに対応しています。ブラウザ版で参加してください。",
-    TEAMS_CAPTIONS_NOT_FOUND: "Teamsのライブキャプションが表示されていません。会議に参加し、Teams側でライブキャプションをONにして字幕を表示してから「再確認」してください。",
-    ZOOM_FRAME_NOT_FOUND: "Zoomの会議画面がまだ開かれていません。会議に参加し、字幕を表示してから「再確認」してください。",
-    UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle Meet、Teams、Zoom（Webクライアント）です。",
-    UNSUPPORTED_FRAME: "会議のメインフレーム以外は取得しません。",
-    NOT_MEETING_PAGE: "Meet会議のページを開いてください。",
-    MEETING_CHANGED: "会議ページが変わったため停止しました。",
-    CAPTURE_CHANGED: "読取りセッションが変わったため停止しました。",
-    PAGE_ACCESS_DENIED: "Chromeがページの読取りを拒否しました。管理ポリシーと対象タブを確認してください。",
-    FRAME_NOT_FOUND: "対象ページの実行コンテキストがありません。会議タブを再確認してください。",
-    EVALUATION_FAILED: "ページでの読取りに失敗しました。会議タブを再確認してください。",
-    READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
-  };
-  function statistics(d) {
-    const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["rows", "字幕行"], ["unmatched", "構造不明"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
-      .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
-      .map(([key, label]) => `${label}=${d[key]}`);
-    // UI hook names only (never caption text); they show which part of a changed Teams layout is missing.
-    const tids = Array.isArray(d?.tids) ? d.tids.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,48}$/.test(l)).slice(0, 12) : [];
-    return [...counts, ...(tids.length ? [`data-tid=${tids.join(",")}`] : [])].join("／");
-  }
-  function describe(result) {
-    const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";
-    const counts = statistics(result?.diagnostics);
-    return messages[code] + `（${code}）` + (counts ? "\n" + counts : "");
-  }
   function badge() {
     const [kind, label] = !active ? (failed ? ["error", "停止（要確認）"] : captionReady ? ["ready", "準備OK"] : ["idle", "未準備"])
       : busy ? ["working", "接続中"] : paused ? ["paused", "一時停止中"] : recovery ? ["working", "自動復旧中"] : ["live", "取得中"];
