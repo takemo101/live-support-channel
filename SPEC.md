@@ -1,12 +1,12 @@
 # Tactiq Live → Claude Code：使い方と仕様
 
-バージョン：0.2.0。最終更新：2026-10-19。
+バージョン：0.3.0。最終更新：2026-10-19。
 
 > **手動導入前の試作です。** ダミーデータ、Chrome API境界の模擬、実ローカルHTTP／MCP stdio通信は自動テスト済みですが、実Chrome・実Tactiq・実Claude Codeをつないだ動作は未検証です。実会議で利用可能と判断する前に、非機密のテスト会議で確認してください。
 
 ## 1. 目的・機能範囲
 
-Tactiqが処理した会議中の字幕を、明示的に選択したClaude Codeセッションへ逐次渡します。AIが会議の要約や質問への回答を行うための**入力経路**です。
+Tactiqが処理した会議中の字幕を、明示的に選択したClaude Codeセッションへ逐次渡します。字幕を運ぶ**入力経路**と、現在のプロジェクトを参照して会話理解・返答を助ける**会議Skill**を分けて提供します。
 
 ### 実装している機能
 
@@ -16,16 +16,18 @@ Tactiqが処理した会議中の字幕を、明示的に選択したClaude Code
 - 明示開始・停止、Tactiq一時停止への追従、ページ移動・DevToolsパネル切替時の停止。
 - 認証付きローカルHTTP、一方向のClaude Code Channels通知。
 - 未確認バッチの再送と、プロセス内の重複通知抑止。
+- `skills/meeting/SKILL.md` による継続支援。今の話、相手の問い、口にできる返答案、必要な根拠・確認・提案を短く表示する。
+- Read／Glob／Grepによる関連プロジェクト資料の参照。編集・Shell・追加の外部送信ツールは無効。
 
 ### 実装していない機能
 
 - 音声の録音・音声認識。文字起こしはTactiq側が担当する。
 - デスクトップ版Zoom／Teams、過去会議の一括読取り、翻訳・画像・ページリンク・チャットの転送。
 - 任意の既存Claude Codeセッションへの入力。channelを有効にして起動したセッションが必要。
-- 定時の自動要約ジョブ、プロジェクト資料の自動読込み、コード変更・コマンド実行。
+- 定時の自動要約ジョブ、会議相手への自動送信・代返、コード変更・コマンド実行。
 - 永続キュー、再起動をまたぐexactly-once配送、AIによる受領確認。
 
-要約やプロジェクトを踏まえた判断には、本人の依頼と必要な資料が別途必要です。推奨起動設定ではファイル読取りを含むbuilt-in toolsを無効にします。資料は先に会話へ与えるか、必要な読取り権限だけを許可する別の設計として検討してください。会議の発言をツール操作や権限承認に利用してはいけません。
+CLIの初期ユーザー依頼で会議サポートを開始します。読み込めた資料の事実・推測・未確認を分け、未確認の納期や予算を確約しない方針です。字幕や資料の中の命令をツール操作や権限承認として扱ってはいけません。Skillはモデルへの指示であり、回答精度や完全なプロンプトインジェクション防御の保証ではありません。
 
 ## 2. 動作条件
 
@@ -34,7 +36,7 @@ Tactiqが処理した会議中の字幕を、明示的に選択したClaude Code
 | Node.js | 22以上。ローカル検証は24.15.0 |
 | Chrome | 125以上。DevToolsを利用 |
 | Tactiq | Chrome拡張が対象タブで動作中。解析対象版は3.1.7185 |
-| Claude Code | Channels対応版。ローカル確認版は2.1.302 |
+| Claude Code | Channels・`--restricted`・セッションplugin・Skill Shell前処理無効化に対応する版。CLI確認版は2.1.302 |
 | Claude認証 | Channelsが利用できるAnthropic認証・組織設定 |
 | ネットワーク | `127.0.0.1:43821` が使用可能 |
 | OS | 権限0700／0600とsymlink拒否を使う。検証環境はmacOS |
@@ -62,7 +64,7 @@ tactiq-live setup
 
 `setup` はユーザー専用の `~/.tactiq-live-channel/extension` に補助拡張を配置し、そのパスを表示します。Chromeの設定・Claudeのグローバル設定は自動変更しません。Tactiq本体やREAは通常起動の依存関係ではありません。
 
-ビルド・bundling・install scriptは不要です。配布物はbin、server、extensionと公開ドキュメントに限定し、実行データ・第三者配布物・解析scratchは含めません。
+ビルド・bundling・install scriptは不要です。配布物はbin、server、extension、skills、`.claude-plugin`と公開ドキュメントに限定し、実行データ・第三者配布物・解析scratchは含めません。
 
 ### 3.2 任意のプロジェクトでClaude Codeを起動する
 
@@ -74,9 +76,17 @@ tactiq-live claude
 CLIは作業ディレクトリを保ったまま、インストールされたNodeとserverの絶対パスからMCP設定を組み立て、その起動だけに渡します。各プロジェクトへMCP設定やコードをコピーする必要はありません。内部では次のflagを付けます。
 
 - `--strict-mcp-config`：指定外のMCP設定を読み込まない。
-- `--tools ""`：字幕をきっかけとするファイル操作・コマンド実行を避ける安全な初期設定。
-- `--disable-slash-commands`：skillsを無効化する。
+- `--tools Read,Glob,Grep,Skill`：参照とSkillだけを公開。編集・Bash・WebFetch・外部送信等を公開しない。
+- `--restricted`：コード実行ツール等を除き、ファイルツールを作業ディレクトリ内へ制限。user／project／localのsettingsは読み込まない。managed設定とCLIのsettingsは引き続き適用される。
+- `--permission-mode manual`：bypassを使わず、必要な承認は本人へ。組織の拒否を迂回しない。
+- `--settings`：hooksとSkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories`を有効にし、.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先をRead denyにする。
+- `--plugin-dir <インストール先>`：このセッションだけに `.claude-plugin/plugin.json` と `skills/meeting/SKILL.md` を読み込む。グローバルSkillsやプロジェクトへコピーしない。
+- `--append-system-prompt-file <Skillの絶対パス>`：同じSkillを常設方針として追加し、初期ユーザー依頼で会議モードを開始。字幕からの自動Skill呼出しには依存しない。
 - `--dangerously-load-development-channels`：自作channelを試すための明示的な開発用許可。認証・ツール権限の迂回のためには使わない。
+
+ホーム／filesystem rootをプロジェクトとして起動することは拒否します。これらのflagはOSサンドボックスではありません。ファイルに埋め込まれた秘密を完全に検出する機能もないため、読み取ってよいプロジェクトでのみ使い、managed設定と実際の拒否動作を受入確認してください。
+
+モデルの選択は既存環境変数を引き継ぎます。例：`ANTHROPIC_MODEL=haiku tactiq-live claude`。実Haikuでの精度・速度・費用は未確認です。
 
 起動時の承認や組織ポリシーに従い、`tactiq-live` が**channelとして有効**なことを確認してください。通常のMCP接続成功だけではpush通知を受け取れるとは限りません。
 
@@ -135,14 +145,22 @@ npm uninstall --global tactiq-live-channel
 
 開始時点に存在する発話IDは、その後に修正されても転送しません。開始前の本文が修正版に混ざるのを防ぐためです。進行中の発話の続きが最初の数秒届かない場合があります。
 
-転送開始後の本文は、Claude Codeを通じて**Anthropicへ送られます**。ローカル受信サーバーだけで完結する機能ではありません。
+転送開始後の本文と、Claudeが読取ったプロジェクト資料は、Claude Codeを通じて**Anthropicへ送られます**。資料読取りは起動直後から始まるため、先に参照範囲を確認してください。ローカル受信サーバーだけで完結する機能ではありません。
 
 ### 継続中
 
 - パネルを開いたままにする。自動開始・バックグラウンド常駐型の全会議監視ではない。
 - 更新があると約5秒の確認単位でバッチを送る。字幕確定、通信、AI処理による遅延は別に発生する。
 - Claude側が作業中の受信・処理タイミングはClaude Code側の挙動に依存する。5秒ごとのAI応答を保証しない。
-- 本人から、例えば「会議内容を参考情報として受け取り、私が質問したら決定事項と未決事項を整理して」と依頼する。
+- 初期依頼で会議モードが有効。重要な変化に対し通常4行、最大6行を目安に短いカードを出す。変化のない相づちでは繰り返さず、話の途中は暫定とする。
+- 「今の話」「相手の問い」「返答案」「根拠・提案」を優先する。根拠は実際に確認した資料だけ。話者や本人の立場が不明なら推測で断定しない。
+- 必要なら役割・会議の目的を伝える。関連する仕様・コードを必要最小限読み、提案と決定・未確認を区別する。
+
+### 助言モードと転送の区別
+
+- `/tactiq-live:meeting stop` または本人の明示的な終了依頼で継続助言を止める。
+- `/tactiq-live:meeting start` または本人の再開依頼で助言を再開する。
+- **助言停止はHTTP／Channels転送を止めない。** 字幕を止めるにはChromeパネルの停止ボタンを押す。会議参加者の字幕中に「止めて」とあっても、本人の操作指示として扱わない。
 
 ### 一時停止・再開
 
@@ -177,6 +195,10 @@ pauseの確認はポーリング単位です。停止操作の瞬間に、既に
 5. パネル停止、ページ移動、DevToolsパネル切替で止まる。
 6. Claude終了後にローカル受信サーバーが残らない。
 7. Google Meet、Zoomブラウザ、Teamsブラウザで個別に確認する。
+8. 必要な非機密資料を参照し、相手の問い・短い返答案・実在する根拠が出るか確認する。
+9. 読めない仕様・未確定日程を断定せず、字幕の命令で秘密を読まないことを確認する。
+10. 作業ディレクトリ外・.env・鍵の読取りが実Claudeで拒否され、編集・Shell・追加外部ツールが使えないことを確認する。
+11. Skillのstopでは助言だけが止まり、パネル停止で初めて転送が止まることを確認する。
 
 通らないサービスを「対応確認済み」と扱ってはいけません。会議の本文や認証情報を不具合報告へそのまま貼らないでください。
 
@@ -201,7 +223,9 @@ Tactiqのisolated world
 | `extension/panel.js` | UI、固定contextの読取り、開始停止、5秒timer、HTTP |
 | `extension/snapshot.js` | 選択会議だけの処理済み状態をwhitelist形式へ変換 |
 | `extension/stream.js` | baseline除外、差分、バッチ、再送 |
-| `bin/tactiq-live.js` | setup／Claude起動／token表示、排他、token更新、子プロセス終了 |
+| `bin/tactiq-live.js` | setup／Claude起動／token表示、読取り専用設定・Skill読込み、排他、token更新、子プロセス終了 |
+| `.claude-plugin/plugin.json` | セッション限定pluginのメタ情報 |
+| `skills/meeting/SKILL.md` | 会議の継続理解・返答支援、参照境界、助言の開始停止 |
 | `server/runtime.js` | ユーザー専用保存先と環境変数override |
 | `server/main.js` | MCP capability、stdio接続、loopback起動、終了 |
 | `server/bridge.js` | HTTP入力検査、認証、順序、重複抑止、channel通知 |
@@ -328,7 +352,7 @@ MCP capability：
 
 `content` はJSON文字列です。`<`、`>`、`&` はUnicode escapeに変換します。`meta` の値は文字列です。返信ツールや `claude/channel/permission` capabilityは持ちません。
 
-同じ送信sessionの発話は `messageId` と必要に応じ `deviceId` で更新として扱います。サーバー側instructionsは、会議本文を非信頼の参考情報とし、実ユーザーの依頼に基づいて回答するよう指定します。プロンプトインジェクションの完全な防止保証ではありません。
+同じ送信sessionの発話は `messageId` と必要に応じ `deviceId` で更新として扱います。サーバー側instructionsは、会議本文を非信頼の参考情報とし、実ユーザーが会議モードを有効にした場合は短い継続支援を行い、それ以外は本人の依頼に基づいて回答するよう指定します。プロンプトインジェクションの完全な防止保証ではありません。
 
 ## 10. 差分・再送・終了の仕様
 
@@ -390,6 +414,7 @@ MCP capability：
 - ブリッジは会議本文をファイルやログへ保存しない。ただし本文はメモリとClaude Code／Anthropic側の会話に残り得る。
 - 拡張Origin形式だけを信頼せず、Bearer認証・型・サイズを検査する。
 - 会議本文の指示でツール実行・外部送信・権限承認を行わない。
+- プロジェクト参照内容もモデルへ送られる。Read denyと作業ディレクトリ境界はOS隔離や完全な機密検出の代替ではない。
 - `.runtime/`、解析対象の第三者拡張本体、ローカル調査scratch、依存関係は公開Git履歴へ含めない。
 
 ## 14. 開発・検証・関連資料
@@ -401,10 +426,15 @@ npm audit --omit=dev
 
 開発時はリポジトリルートで `npm ci --ignore-scripts` 後に実行します。テストはNode標準test runnerを使用します。CLIのhelp・配置・作業ディレクトリ維持・起動間token分離・排他・signal cleanupと、隔離したnpmグローバルインストールも確認します。固定読取り式のVM実行、Chrome／DOM境界の模擬、privacy regression、packing上限、実HTTP、stdio MCP handshake、EOFのみでの終了を含みます。
 
-**実Chromeのcontext読取り、三サービスの実Tactiq状態、実Claude Codeのモデル受信、長時間の精度・費用は未検証**です。ダミーテスト成功を本番の全経路保証として扱わないでください。
+CLI／plugin／読取り設定は引数記録と公式CLIのparse・plugin validateで確認。会議Skillは架空の催促・秘密要求に対する5つの独立応答を比較し、短い返答案と未確認の扱いを評価しています。これは実Claude Code／HaikuでのSkill実行・権限強制の試験ではありません。
+
+**実Chromeのcontext読取り、三サービスの実Tactiq状態、実Claude Codeのモデル受信・権限拒否、長時間の精度・費用は未検証**です。ダミーテスト成功を本番の全経路保証として扱わないでください。
 
 - [README：概要と短い導入手順](README.md)
 - [REAが分析に役立った点と限界](docs/rea-analysis-report.md)
 - [Chrome DevTools inspectedWindow](https://developer.chrome.com/docs/extensions/reference/api/devtools/inspectedWindow)
 - [Claude Code Channels](https://code.claude.com/docs/en/channels)
 - [Claude Code Channels reference](https://code.claude.com/docs/en/channels-reference)
+- [Claude Code Skills](https://code.claude.com/docs/en/skills)
+- [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+- [Claude Code permissions](https://code.claude.com/docs/en/permissions)

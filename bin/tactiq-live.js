@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { copyFile, lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -71,6 +72,9 @@ async function main() {
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
   try {
+    const project = process.cwd();
+    if (dirname(project) === project || project === await realpath(homedir())) throw new Error("Start from a project directory, not your home or filesystem root.");
+    checkCancellation();
     await requireFreePort();
     checkCancellation();
     await prepareToken(directory);
@@ -91,12 +95,32 @@ async function main() {
       args: [fileURLToPath(new URL("../server/main.js", import.meta.url))],
       env: { TACTIQ_RUNTIME_DIR: directory },
     } } };
-    console.error("Tactiq Live project: " + process.cwd());
-    console.error("Pair with a fresh token from: tactiq-live token");
+    const pluginRoot = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
+    const skillPath = join(pluginRoot, "skills/meeting/SKILL.md");
+    const canonicalRuntime = await realpath(directory);
+    const settings = {
+      disableAllHooks: true,
+      disableSkillShellExecution: true,
+      permissions: {
+        blockReadsOutsideWorkingDirectories: true,
+        deny: [
+          "Read(//**/.env)", "Read(//**/.env.*)", "Read(//**/*.pem)", "Read(//**/*.key)",
+          "Read(//**/id_rsa*)", "Read(//**/id_ed25519*)", "Read(//**/.npmrc)", "Read(//**/.netrc)",
+          "Read(//**/.git/**)", "Read(//**/.ssh/**)", "Read(//**/.aws/**)", "Read(//**/.claude/**)",
+          "Read(/" + canonicalRuntime + "/**)",
+        ],
+      },
+    };
+    checkCancellation();
+    console.error("Tactiq Live project: " + project);
+    console.error("Meeting support: project read-only; pair with a fresh token from tactiq-live token.");
     child = spawn("claude", [
-      "--mcp-config", JSON.stringify(config),
-      "--strict-mcp-config", "--tools", "", "--disable-slash-commands",
+      "--mcp-config", JSON.stringify(config), "--strict-mcp-config",
+      "--tools", "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
+      "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
+      "--append-system-prompt-file", skillPath,
       "--dangerously-load-development-channels", "server:tactiq-live",
+      "会議サポートモードを開始してください。まずこのプロジェクトの必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、今の話・相手の問い・口にできる返答案・必要な指摘や提案を日本語で短く更新してください。",
     ], { stdio: "inherit", env: process.env });
     try {
       const [code] = await once(child, "exit");

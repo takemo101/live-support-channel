@@ -84,7 +84,7 @@ test("Claude launcher preserves each project cwd and isolates launch tokens", as
     await access(config.args[0]);
     assert.equal(config.env.TACTIQ_RUNTIME_DIR, f.runtime);
     assert.ok(actual.args.includes("--strict-mcp-config"));
-    assert.equal(actual.args[actual.args.indexOf("--tools") + 1], "");
+    assert.equal(actual.args[actual.args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill");
     assert.ok(actual.args.includes("server:tactiq-live"));
     const token = (await readFile(join(f.runtime, "token"), "utf8")).trim();
     if (previous) assert.notEqual(token, previous);

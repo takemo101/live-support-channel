@@ -1,0 +1,6 @@
+{
+  "name": "tactiq-live",
+  "version": "0.3.0",
+  "author": { "name": "takemo101" },
+  "description": "Read-only live meeting support: understand the discussion, draft a speakable reply, and ground suggestions in the current project."
+}

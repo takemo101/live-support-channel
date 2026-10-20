@@ -1,8 +1,8 @@
 {
   "name": "tactiq-live-channel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "bin": { "tactiq-live": "bin/tactiq-live.js" },
-  "files": ["bin/", "server/", "extension/", "README.md", "SPEC.md", "docs/rea-analysis-report.md"],
+  "files": ["bin/", "server/", "extension/", "skills/", ".claude-plugin/", "README.md", "SPEC.md", "docs/rea-analysis-report.md"],
   "repository": { "type": "git", "url": "git+https://github.com/takemo101/tactiq-live-channel.git" },
   "private": true,
   "type": "module",
