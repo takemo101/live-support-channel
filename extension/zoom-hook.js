@@ -4,7 +4,6 @@
   const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
   try { delete page.__liveCaptionsHookCore; } catch {}
   if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "app.zoom.us" || page[key]) return;
-  const { MutationObserver: Observer } = page;
   const wallTime = page.Date.now.bind(page.Date);
   const BOX = ".live-transcription-subtitle__box", FRAME = "#webclient";
   const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -13,10 +12,7 @@
     return match ? `app.zoom.us/wc/${match[1]}` : null;
   };
   const frameDocument = () => { try { return page.document.querySelector(FRAME)?.contentDocument ?? null; } catch { return null; } };
-  const life = core(page, { meeting: currentMeeting, cleanup(s) {
-    try { s.observer?.disconnect(); } catch {}
-    s.records.length = 0; s.speakers.clear(); s.observed = null;
-  } });
+  const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.length = 0; s.speakers.clear(); s.names.clear(); s.tried.clear(); } });
   const { finish, valid } = life;
   const clean = value => value.replace(/\s+/g, " ").trim();
   // Zoom shows rolling text: the new display either extends the old one or drops its beginning. Returns the appended part, or null if unrelated.
@@ -40,42 +36,50 @@
       const element = image.nextElementSibling; if (!element) continue;
       const text = clean(element.textContent ?? ""); if (!text) continue;
       if (text.length > 32768) fail("CAPTION_LIMIT");
-      out.push({ element, text, avatar: hash(String(image.src ?? "")) });
+      out.push({ element, text, avatar: hash(String(image.src ?? "")), src: String(image.src ?? "") });
     }
     return out;
   }
-  function speakerNumber(s, avatar) {
-    let number = s.speakers.get(avatar);
-    if (!number) { if (s.speakers.size >= 256) fail("CAPTION_LIMIT"); number = s.speakers.size + 1; s.speakers.set(avatar, number); }
-    return number;
+  // Zoom shows the participant's name on their video tile, which uses the same avatar image as the caption row. Anonymous until that tile is visible.
+  function lookupName(src) {
+    const doc = frameDocument(), box = doc?.querySelector(BOX); if (!doc || !src) return "";
+    let seen = 0;
+    for (const image of doc.querySelectorAll("img")) {
+      if (++seen > 400) break;
+      if (image.src !== src || box?.contains(image)) continue;
+      const name = life.displayName(image.parentElement?.nextSibling?.textContent ?? "");
+      if (name) return name;
+    }
+    return "";
   }
+  function learn(s, speaker, src) {
+    if (s.names.has(speaker)) return;
+    const at = wallTime(); if (at - (s.tried.get(speaker) ?? 0) < 2000) return;
+    s.tried.set(speaker, at);
+    const name = lookupName(src); if (name) s.names.set(speaker, name);
+  }
+  const nameOf = (s, speaker) => s.names.get(speaker) ?? `話者 ${speaker}（名前未確認）`;
   function update(s, record, text, added) {
     s.stats.received++;
     record.text = added === null ? text : record.text + added; record.shown = text; record.revision++;
-    s.characters += record.text.length - (record.block?.transcript.length ?? 0);
-    if (s.characters > 2_000_000) fail("CAPTION_LIMIT");
+    life.charge(s, record.text.length - (record.block?.transcript.length ?? 0));
     record.block = { messageId: record.localId, deviceId: `speaker-${record.speaker}`, messageVersion: record.revision,
-      speakerName: `話者 ${record.speaker}（名前未確認）`, transcript: record.text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
+      speakerName: nameOf(s, record.speaker), transcript: record.text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
     s.stats.accepted++;
   }
   function create(s, row, excluded) {
-    if (s.records.length >= 4000) fail("CAPTION_LIMIT");
-    const speaker = speakerNumber(s, row.avatar);
+    const speaker = life.speakerNumber(s, row.avatar); learn(s, speaker, row.src);
     const record = { speaker, avatar: row.avatar, shown: row.text, text: row.text, revision: 0, excluded, block: null, localId: `${s.owner}:${s.records.length + 1}` };
-    s.records.push(record); s.elements.set(row.element, record);
+    life.track(s, record); s.elements.set(row.element, record);
     if (excluded) { s.stats.baselineExcluded++; return; }
     update(s, record, row.text, null);
   }
   function sample(s, baseline = false) {
     const box = frameDocument()?.querySelector(BOX) ?? null;
-    if (box !== s.observed) {
-      try { s.observer?.disconnect(); } catch {}
-      s.observed = box;
-      if (box) { s.observer = new Observer(() => { if (valid(s)) watch(s); }); s.observer.observe(box, { subtree: true, childList: true, characterData: true }); }
-    }
+    life.observe(s, box, watch);
     if (!box) return;
     for (const row of rows(box)) {
-      const known = s.elements.get(row.element);
+      const known = s.elements.get(row.element); learn(s, life.speakerNumber(s, row.avatar), row.src);
       if (!known) {
         // A re-rendered row that continues something already seen is the same utterance, not a new one.
         const same = s.records.slice(-32).findLast(r => r.avatar === row.avatar && !r.excluded && (continuation(r.text, row.text) !== null || r.text.startsWith(row.text)));
@@ -89,10 +93,7 @@
       if (added) update(s, known, row.text, added); else known.shown = row.text;
     }
   }
-  function watch(s) {
-    try { sample(s); }
-    catch (error) { if (life.current === s) finish(["CAPTION_LIMIT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN"); }
-  }
+  const watch = s => life.watch(s, sample);
   function metadata() {
     const id = currentMeeting();
     const code = !id ? "NOT_MEETING_PAGE" : frameDocument() ? "READY" : "ZOOM_FRAME_NOT_FOUND";
@@ -101,23 +102,8 @@
       meetings: id ? [{ id, title: "Zoom Webクライアント（画面字幕・試験版）" }] : [], captionReady: code === "READY", code,
       diagnostics: { peers: 0, captionChannels: 0, ...stats } };
   }
-  function command(params = {}) {
-    const early = life.prologue(params, metadata); if (early) return early;
-    const { action, meetingId, captureId } = params;
-    if (action === "start" || action === "recover") {
-      const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
-      const retired = finish("CAPTURE_REPLACED");
-      if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
-      life.clearTerminal();
-      const s = { owner: captureId, meetingId, observer: null, observed: null, elements: new WeakMap(), records: [], speakers: new Map(), characters: 0,
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } };
-      life.activate(s);
-      try { sample(s, true); }
-      catch (error) { if (life.current === s) finish(error?.code === "CAPTION_LIMIT" ? "CAPTION_LIMIT" : "CAPTION_FORMAT_UNKNOWN"); return { status: "unavailable", code: life.terminal.code }; }
-    }
-    return life.epilogue(params, { platform: "Zoom", blocks: s => s.records.flatMap(r => r.block ? [{ ...r.block }] : []),
-      before: (s, action) => { if (action === "read") watch(s); } });
-  }
+  const command = params => life.domCommand(params ?? {}, { metadata, platform: "Zoom", sample, extra: { names: new Map(), tried: new Map() },
+    blocks: s => s.records.flatMap(r => r.block ? [{ ...r.block, speakerName: nameOf(s, r.speaker) }] : []) });
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
   page.addEventListener("pagehide", () => finish("MEETING_CHANGED"));
 })();

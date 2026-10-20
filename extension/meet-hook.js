@@ -12,7 +12,7 @@
   let prepareError = null, decoding = null;
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
-  const currentMeeting = () => page.location.hostname === "meet.google.com" && page.location.protocol === "https:" && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(page.location.pathname)
+  const currentMeeting = () => page.location.hostname === "meet.google.com" && page.location.protocol === "https:" && /^\/(?:meet\/)?[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(page.location.pathname)
     ? `meet.google.com${page.location.pathname.replace(/\/$/, "")}` : null;
   function captionControl() {
     const buttons = [...page.document.querySelectorAll("button[aria-label]")].filter(b => b.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
@@ -159,9 +159,10 @@
     let speaker = s.speakers.get(packet.device);
     if (!speaker) {
       if (s.speakers.size >= 256) fail("CAPTION_LIMIT");
-      speaker = { number: s.speakers.size + 1, boundary: packet.id, max: packet.id };
+      speaker = { number: s.speakers.size + 1, boundary: packet.id, max: packet.id, name: "", tried: 0 };
       s.speakers.set(packet.device, speaker);
     }
+    if (!speaker.name && packet.text !== null) { const at = wallTime(); if (at - speaker.tried >= 500) { speaker.tried = at; speaker.name = lookupName(packet.text); } }
     // shortcut: no verified generation timestamp; exclude each speaker's first ID and older IDs, not just one revision.
     if (packet.id <= speaker.boundary) { s.stats.baselineExcluded++; return; }
     const id = `${speaker.number}:${packet.id}`;
@@ -170,7 +171,7 @@
     if (packet.id > speaker.max) speaker.max = packet.id;
     if (!record) {
       if (s.records.size >= 4000) fail("CAPTION_LIMIT");
-      record = { block: null, revision: -1, localId: `${s.owner}:${s.records.size + 1}` }; s.records.set(id, record);
+      record = { speaker, block: null, revision: -1, localId: `${s.owner}:${s.records.size + 1}` }; s.records.set(id, record);
     }
     if (packet.text === null || packet.revision < record.revision) return;
     if (packet.revision === record.revision) {
@@ -182,10 +183,27 @@
     record.revision = packet.revision;
     record.block = { messageId: record.localId,
       deviceId: `speaker-${speaker.number}`, messageVersion: packet.revision,
-      speakerName: `話者 ${speaker.number}（名前未確認）`, transcript: packet.text,
+      speakerName: nameOf(speaker), transcript: packet.text,
       timestamp: record.block?.timestamp ?? wallTime(), version: packet.revision };
     s.stats.accepted++;
   }
+  // Meet's caption packets carry no names. The visible caption list does: a speaker is named only when exactly one name shows text matching the packet.
+  const REGION = 'div[role="region"][tabindex="0"]';
+  function lookupName(text) {
+    try {
+      const key = life.letters(text); if (key.length < 8) return "";
+      const names = new Set();
+      for (const region of page.document.querySelectorAll(REGION)) {
+        for (const row of life.labelledRows(region, 0).rows) {
+          const other = life.letters(row.text);
+          if (other.length >= 8 && (other.startsWith(key) || key.startsWith(other))) names.add(row.name);
+          if (names.size > 1) return "";
+        }
+      }
+      return names.size === 1 ? [...names][0] : "";
+    } catch { return ""; }
+  }
+  const nameOf = speaker => speaker.name || `話者 ${speaker.number}（名前未確認）`;
   function receive(entry, event) {
     const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
@@ -347,7 +365,7 @@
       }
       if (assisted && action === "start") { const code = enableCaptions(s); if (code) return { status: code === "CAPTURE_CHANGED" ? "ended" : "unavailable", code }; }
     }
-    return life.epilogue(params, { platform: "Google Meet", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []) });
+    return life.epilogue(params, { platform: "Google Meet", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block, speakerName: nameOf(r.speaker) }] : []) });
   }
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
   try {

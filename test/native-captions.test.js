@@ -82,6 +82,17 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
       await send(wire(200, "private paused prefix revised", 2)); await stream.update(call("read")); eq(sent.length, 2, "resume initial utterance excluded");
       await send(wire(201, "after resume")); await stream.update(call("read")); eq(sent.length, 3, "new resumed utterance forwarded");
       eq(JSON.stringify(sent).includes("private"), false, "excluded text never reaches payloads");
+      // Packets carry no names: the speaker is named only from the visible caption list, and only when exactly one name shows matching text.
+      const region = document.createElement("div"); region.setAttribute("role", "region"); region.tabIndex = 0; document.body.append(region);
+      const row = (name, text) => { const item = document.createElement("div"), head = document.createElement("div"), who = document.createElement("span"), body = document.createElement("div"); who.textContent = name; head.append(document.createElement("img"), who); body.textContent = text; item.append(head, body); region.append(item); return item; };
+      const first = row("Bob Example", "fourth utterance sample extended"), second = row("Carol Example", "fourth utterance sample extended too");
+      await new Promise(r => setTimeout(r, 600)); await send(wire(202, "fourth utterance sample")); await stream.update(call("read"));
+      eq(call("read").blocks.every(b => b.speakerName === "話者 1（名前未確認）"), true, "two names show matching text: ambiguous, stays anonymous");
+      second.remove(); await new Promise(r => setTimeout(r, 600)); await send(wire(202, "fourth utterance sample", 2)); await stream.update(call("read"));
+      eq(call("read").blocks.map(b => b.speakerName), ["Bob Example", "Bob Example"], "a unique match names the speaker, including earlier blocks");
+      eq(sent.at(-1).updates.map(u => u.speakerName), ["Bob Example", "Bob Example"], "the name reaches the payload");
+      eq(JSON.stringify(sent).includes("private-device-id"), false, "device ID still not sent with names");
+      first.remove(); region.remove();
       await send(Uint8Array.of(10, 255));
       eq(call("read").code, "CAPTION_FORMAT_UNKNOWN", "unknown protocol stops, not DOM fallback");
       eq(transport.readyState, "open", "decode failure preserves native transport");
@@ -123,10 +134,10 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
   }
   assert.equal(evaluated.exceptionDetails, undefined, evaluated.exceptionDetails?.text);
   const result = evaluated.result.value; assert.ok(result); assert.equal(result.ok, true, result.error + "\n" + result.stack);
-  assert.ok(result.checks >= 20); assert.equal(result.sent.length, 3);
+  assert.ok(result.checks >= 20); assert.equal(result.sent.length, 5);
 
   const runtime = join(temp, "runtime"); await mkdir(runtime, { mode: 0o700 });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../server/main.js", import.meta.url))], env: { TACTIQ_RUNTIME_DIR: runtime, TACTIQ_PORT: "0" }, stderr: "pipe" });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../server/main.js", import.meta.url))], env: { LIVE_SUPPORT_RUNTIME_DIR: runtime, LIVE_SUPPORT_PORT: "0" }, stderr: "pipe" });
   const client = new Client({ name: "rtc-caption-fixture", version: "1" }, { capabilities: {} });
   let logs = "", readyTimer, eventTimer, finish;
   const endpoint = new Promise((resolve, reject) => {
@@ -139,7 +150,7 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
     await client.connect(transport); const url = await endpoint, token = (await readFile(join(runtime, "token"), "utf8")).trim();
     for (const payload of result.sent) assert.equal((await fetch(url + "/captions", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) })).status, 202);
     await Promise.race([received, new Promise((_, reject) => { eventTimer = setTimeout(() => reject(Error("RTC channel events missing")), 5000); })]);
-    assert.equal(events.length, 3); assert.equal(events[0].updates[0].messageId, events[1].updates[0].messageId);
+    assert.equal(events.length, 5); assert.deepEqual(events[4].updates.map(u => u.speakerName), ["Bob Example", "Bob Example"], "the speaker name reaches the MCP event"); assert.equal(events[0].updates[0].messageId, events[1].updates[0].messageId);
     assert.equal(events[2].updates[0].transcript, "after resume"); assert.ok(!logs.includes(token));
     t.diagnostic(`Chrome loopback RTC: ${result.checks} assertions, ${result.acknowledgments} own ACKs, ${events.length} real HTTP/MCP events; no live meeting/model.`);
   } finally { clearTimeout(readyTimer); clearTimeout(eventTimer); await client.close(); }

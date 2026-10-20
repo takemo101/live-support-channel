@@ -81,3 +81,9 @@ test("Zoom web client is read only through the prepared hook, bound to its meeti
   assert.equal(inspect({ action: "discover" }, { ...options, framed: true }).code, "UNSUPPORTED_FRAME");
   assert.equal(calls.length, 2);
 });
+test("Meet's /meet/<code> URL form is a meeting page; other prefixes are not", () => {
+  const api = { version: 1, command: params => ({ status: "ready", captionReady: true, code: "READY", id: params.meetingId }) };
+  const ok = inspect({ action: "discover" }, { api, path: "/meet/abc-defg-hij" });
+  assert.equal(ok.code, "READY"); assert.equal(ok.id, "meet.google.com/meet/abc-defg-hij");
+  for (const path of ["/foo/abc-defg-hij", "/meet/", "/meet/abc-defg-hij/extra", "/meet/abc-defg-hijk"]) assert.equal(inspect({ action: "discover" }, { api, path }).code, "NOT_MEETING_PAGE", path);
+});

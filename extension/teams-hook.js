@@ -1,143 +1,92 @@
-// MAIN/document_start on Teams. Observation only: never creates channels, sends, reads the DOM, tokens or app state.
-// No transcript processing while idle; no token or HTTP access here.
+// MAIN/document_start on Teams. Reads only the live-caption list the user has made visible, and only after an explicit start.
+// No transcript processing while idle; never mutates the page, starts captions, sends, or touches tokens, HTTP, sockets, RTC or app state.
 (() => {
   const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
   try { delete page.__liveCaptionsHookCore; } catch {}
   const hosts = new Set(["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]);
   if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || !hosts.has(page.location.hostname) || page[key]) return;
-  const NativePeer = page.RTCPeerConnection, create = NativePeer?.prototype?.createDataChannel;
-  const { TextDecoder: Decoder, ArrayBuffer: Buffer } = page;
-  const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
-  const LIMIT = 262144, peers = new Set(), tracked = new WeakMap();
-  let prepareError = null;
+  const wallTime = page.Date.now.bind(page.Date);
+  const LIST = '[data-tid="closed-caption-v2-virtual-list-content"]';
   const fail = code => { throw Object.assign(new Error(code), { code }); };
-  const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
   const currentMeeting = () => page.location.protocol === "https:" && hosts.has(page.location.hostname) ? `${page.location.hostname}/call` : null;
-  const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.clear(); s.speakers.clear(); s.entries.clear(); } });
+  const findList = () => { try { return page.document.querySelector(LIST); } catch { return null; } };
+  const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.length = 0; s.speakers.clear(); } });
   const { finish, valid } = life;
-  // Teams' main channel also carries unrelated control traffic: anything that is not a recognition result is ignored, never an error.
-  function results(data) {
-    let bytes;
-    if (data instanceof Buffer) bytes = new page.Uint8Array(data); else if (ArrayBuffer.isView(data)) bytes = new page.Uint8Array(data.buffer, data.byteOffset, data.byteLength); else return null;
-    if (!bytes.length || bytes.length > LIMIT) return null;
-    let message; try { message = new Decoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
-    const start = message.indexOf("{"); if (start < 0 || start > 32) return null;
-    let body; try { body = JSON.parse(message.slice(start)); } catch { return null; }
-    return body && Array.isArray(body.recognitionResults) ? body.recognitionResults.slice(0, 65) : null;
+  const PREFIX = 16;
+  // Teams revises a caption in place (words are corrected, punctuation and case added); an element reused for a different sentence shares no real prefix.
+  function related(a, b) {
+    if (a === b) return true;
+    const x = life.letters(a), y = life.letters(b), limit = Math.min(PREFIX, x.length, y.length); let i = 0;
+    while (i < limit && x[i] === y[i]) i++;
+    return limit > 0 && i === limit;
   }
-  function ingest(s, raw) {
-    if (!raw || typeof raw !== "object" || !("timestampAudioSent" in raw)) return;
-    if (!valid(s)) return;
-    const { id, userId, timestampAudioSent, text } = raw;
-    const stamp = typeof timestampAudioSent === "number" && Number.isSafeInteger(timestampAudioSent) && timestampAudioSent >= 0 ? BigInt(timestampAudioSent)
-      : typeof timestampAudioSent === "string" && /^\d{1,20}$/.test(timestampAudioSent) ? BigInt(timestampAudioSent) : invalid();
-    if (typeof userId !== "string" || !userId || userId.length > 512 || /\p{Cc}/u.test(userId)) invalid();
-    const version = typeof id === "string" ? /^[^/]{1,256}\/(\d{1,9})$/.exec(id) : null; if (!version) invalid();
-    if (text !== undefined && text !== null && typeof text !== "string") invalid();
-    if (typeof text === "string" && text.length > 32768) fail("CAPTION_LIMIT");
+  // The only structure relied on: a text element whose parent is preceded by a sibling element holding the speaker's label.
+  // Text that cannot be attributed this way is unknown: if nothing at all in the list matches, the reader stops instead of guessing.
+  function rows(list, stats) {
+    const { rows: out, unmatched } = life.labelledRows(list, 1);
+    stats.rows = out.length; stats.unmatched = unmatched;
+    if (!out.length && unmatched) fail("CAPTION_FORMAT_UNKNOWN");
+    if (out.length > 256) fail("CAPTION_LIMIT");
+    return out;
+  }
+  function update(s, record, text) {
     s.stats.received++;
-    const revision = Number(version[1]);
-    let speaker = s.speakers.get(userId);
-    if (!speaker) {
-      if (s.speakers.size >= 256) fail("CAPTION_LIMIT");
-      speaker = { number: s.speakers.size + 1, boundary: stamp, max: stamp };
-      s.speakers.set(userId, speaker);
-    }
-    // No verified clock: exclude each speaker's first utterance and older ones, not just one revision.
-    if (stamp <= speaker.boundary) { s.stats.baselineExcluded++; return; }
-    const recordKey = `${speaker.number}:${stamp}`;
-    let record = s.records.get(recordKey);
-    if (!record && stamp < speaker.max) fail("CAPTION_SEQUENCE_UNKNOWN");
-    if (stamp > speaker.max) speaker.max = stamp;
-    if (!record) {
-      if (s.records.size >= 4000) fail("CAPTION_LIMIT");
-      record = { block: null, revision: -1, localId: `${s.owner}:${s.records.size + 1}` }; s.records.set(recordKey, record);
-    }
-    if (typeof text !== "string" || revision < record.revision) return;
-    if (revision === record.revision) {
-      if (text !== record.block.transcript) fail("CAPTION_REVISION_CONFLICT");
-      return;
-    }
-    s.characters += text.length - (record.block?.transcript.length ?? 0);
-    if (s.characters > 2_000_000) fail("CAPTION_LIMIT");
-    record.revision = revision;
-    record.block = { messageId: record.localId, deviceId: `speaker-${speaker.number}`, messageVersion: revision,
-      speakerName: `話者 ${speaker.number}（名前未確認）`, transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: revision };
+    record.text = text; record.revision++;
+    life.charge(s, text.length - (record.block?.transcript.length ?? 0));
+    record.block = { messageId: record.localId, deviceId: `speaker-${record.speaker}`, messageVersion: record.revision,
+      speakerName: record.name, transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
     s.stats.accepted++;
   }
-  function receive(entry, event) {
-    const s = life.current;
-    if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
-    try {
-      const items = results(event.data); if (!items) return;
-      for (const raw of items) { ingest(s, raw); if (life.current !== s) return; }
-    } catch (error) {
-      if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
+  function create(s, row, excluded) {
+    const speaker = life.speakerNumber(s, row.name);
+    const record = { speaker, name: row.name, text: row.text, revision: 0, excluded, block: null, localId: `${s.owner}:${s.records.length + 1}` };
+    life.track(s, record); s.elements.set(row.element, record);
+    if (excluded) { s.stats.baselineExcluded++; return; }
+    update(s, record, row.text);
+  }
+  function revise(s, record, text) {
+    if (text === record.text) return;
+    if (record.excluded) { record.text = text; s.stats.baselineExcluded++; return; }
+    update(s, record, text);
+  }
+  function sample(s, baseline = false) {
+    const list = findList();
+    life.observe(s, list, watch);
+    if (!list) return;
+    for (const row of rows(list, s.stats)) {
+      const known = s.elements.get(row.element);
+      if (known && known.name === row.name && related(known.text, row.text)) { revise(s, known, row.text); continue; }
+      // A re-rendered row of an utterance already seen is the same utterance, not a new one.
+      const same = s.records.slice(-32).findLast(r => r.name === row.name && related(r.text, row.text));
+      if (same && !known) { s.elements.set(row.element, same); revise(s, same, row.text); continue; }
+      create(s, row, baseline && !known);
     }
   }
-  function track(peer) {
-    if (tracked.has(peer)) return tracked.get(peer);
-    if (peers.size >= 16) { prepareError = "RTC_RESOURCE_LIMIT"; finish(prepareError); return null; }
-    const record = { peer, channels: new Set() }; peers.add(record); tracked.set(peer, record);
-    peer.addEventListener("datachannel", event => { if (event.isTrusted === true) attach(record, event.channel); });
-    peer.addEventListener("connectionstatechange", () => {
-      if (["closed", "failed"].includes(peer.connectionState)) {
-        peers.delete(record); if (life.current?.connection === record) finish("RTC_CONNECTION_CLOSED");
+  const diagnose = s => { s.stats.tids = tids(); };
+  const watch = s => life.watch(s, sample, diagnose);
+  // Only the names of UI hooks (never text) help diagnose a changed Teams layout.
+  function tids() {
+    try {
+      const wrapper = page.document.querySelector(LIST)?.closest('[data-tid="closed-caption-renderer-wrapper"]') ?? page.document.querySelector('[data-tid="closed-caption-renderer-wrapper"]');
+      const found = new Set();
+      for (const element of wrapper?.querySelectorAll("[data-tid]") ?? []) {
+        const tid = element.getAttribute("data-tid");
+        if (/^[A-Za-z0-9_.-]{1,48}$/.test(tid ?? "")) found.add(tid);
+        if (found.size >= 12) break;
       }
-    });
-    return record;
+      return [...found];
+    } catch { return []; }
   }
-  function attach(connection, channel) {
-    if (channel.label !== "main-channel") return null;
-    for (const entry of connection.channels) if (entry.channel === channel) return entry;
-    if (connection.channels.size >= 32) { prepareError = "RTC_RESOURCE_LIMIT"; finish(prepareError); return null; }
-    const entry = { channel }; connection.channels.add(entry);
-    try {
-      channel.addEventListener("message", event => receive(entry, event));
-      channel.addEventListener("close", () => {
-        connection.channels.delete(entry);
-        if (life.current?.entries.has(entry)) finish("CAPTION_CHANNEL_CLOSED");
-      });
-    } catch (error) { connection.channels.delete(entry); throw error; }
-    return entry;
-  }
-  const live = entry => ["open", "connecting"].includes(entry.channel.readyState);
-  const candidates = () => [...peers].filter(p => p.peer.connectionState === "connected" && [...p.channels].some(live));
   function metadata() {
-    const id = currentMeeting(), choices = candidates(), selected = choices.length === 1 ? choices[0] : null;
-    const code = prepareError ?? (!id ? "NOT_MEETING_PAGE" : selected ? "READY" : choices.length > 1 ? "RTC_CONNECTION_AMBIGUOUS" : "RTC_CONNECTION_NOT_FOUND");
+    const id = currentMeeting();
+    const code = !id ? "NOT_MEETING_PAGE" : findList() ? "READY" : "TEAMS_CAPTIONS_NOT_FOUND";
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
-    return { status: "ready", source: "teams-rtc-experimental", platform: "Teams",
-      meetings: id ? [{ id, title: "Microsoft Teams（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(live).length : 0, ...stats } };
+    return { status: "ready", source: "teams-dom-experimental", platform: "Teams",
+      meetings: id ? [{ id, title: "Microsoft Teams（画面字幕・試験版）" }] : [], captionReady: code === "READY", code,
+      diagnostics: { peers: 0, captionChannels: 0, ...stats, ...(code === "READY" ? {} : { tids: tids() }) } };
   }
-  function command(params = {}) {
-    const early = life.prologue(params, metadata); if (early) return early;
-    const { action, meetingId, captureId } = params;
-    if (action === "start" || action === "recover") {
-      const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
-      const retired = finish("CAPTURE_REPLACED");
-      if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
-      const target = candidates()[0]; life.clearTerminal();
-      life.activate({ owner: captureId, meetingId, connection: target, entries: new Set([...target.channels].filter(live)),
-        records: new Map(), speakers: new Map(), characters: 0, started: now(),
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } });
-    }
-    return life.epilogue(params, { platform: "Teams", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []) });
-  }
+  const command = params => life.domCommand(params ?? {}, { metadata, platform: "Teams", sample, diagnose, stats: { rows: 0, unmatched: 0 },
+    blocks: s => s.records.flatMap(r => r.block ? [{ ...r.block }] : []) });
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
-  try {
-    if (typeof NativePeer !== "function" || typeof create !== "function") fail("RTC_UNAVAILABLE");
-    NativePeer.prototype.createDataChannel = function (...args) {
-      const channel = create.apply(this, args);
-      try { const record = track(this); if (record) attach(record, channel); } catch { prepareError = "RTC_PREPARE_FAILED"; finish(prepareError); }
-      return channel;
-    };
-    page.RTCPeerConnection = new Proxy(NativePeer, { construct(target, args, newTarget) {
-      const peer = Reflect.construct(target, args, newTarget);
-      try { track(peer); } catch { prepareError = "RTC_PREPARE_FAILED"; }
-      return peer;
-    } });
-  } catch { prepareError = "RTC_PREPARE_FAILED"; }
   page.addEventListener("pagehide", () => finish("MEETING_CHANGED"));
 })();

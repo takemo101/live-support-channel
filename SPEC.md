@@ -6,18 +6,18 @@
 
 ## 1. 目的と範囲
 
-Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「今の話・相手の問い・短い返答案・根拠や提案」を表示します。Tactiqは不要。CLI名 `tactiq-live`、channel名、保存先は互換性のため維持します。
+Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「要点・相手の問い・短い返答案・根拠付きの事業／技術の提案」を表示します。Tactiqは不要。CLI名 `live-support`、channel名、保存先は互換性のため維持します。
 
 実装範囲：
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
 - Meet限定の参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。
 - 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
-- 約1秒のsnapshot／heartbeat、約5秒の差分送信。発話IDと改訂でupsert。
+- 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 
-対象外：Zoomの状態ストア・ソケット・参加者名の読取り、Teamsの字幕開始・購読・内部状態の読取り、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
+対象外：Zoomの状態ストア・ソケット・参加者一覧の読取り、Teamsの字幕開始・購読・内部状態の読取り、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
 
 字幕は取得できた一部分です。初回ID除外、通信遅延・欠落等があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
 
@@ -42,18 +42,18 @@ Channelsはresearch previewです。公式資料ではBedrock／GoogleのAgent P
 
 ```bash
 npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
-tactiq-live setup
+live-support setup
 ```
 
-表示された拡張フォルダ（通常 `~/.tactiq-live-channel/extension`）を `chrome://extensions` のデベロッパーモードから手動で読み込みます。ChromeやClaudeのユーザー設定は自動変更しません。ビルド、Tactiq、REAは起動時依存ではありません。
+表示された拡張フォルダ（通常 `~/.live-support/extension`）を `chrome://extensions` のデベロッパーモードから手動で読み込みます。ChromeやClaudeのユーザー設定は自動変更しません。ビルド、Tactiq、REAは起動時依存ではありません。
 
 cloneした環境では `just install` で独立コピーのグローバル導入とsetup、`just uninstall` でCLIのみ削除できます。justfileはdotenvを読まず、install失敗時はsetupしません。
 
 ```bash
 cd /path/to/project
-tactiq-live claude
+live-support claude
 # 別ターミナル
-tactiq-live token
+live-support token
 ```
 
 tokenを公開しないでください。ランチャーはcwdを維持し、インストール先の絶対パスからその起動だけのMCP設定を作ります。プロジェクトへのファイル配置やグローバルSkill追加は不要です。起動直後から資料を読むため、先に非機密の参照範囲を選んでください。
@@ -64,9 +64,9 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 - `--restricted`、`--permission-mode manual`。bypassは使わず、managed設定が優先。
 - `--settings` でhooks、SkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories` とRead deny（.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先）を指定。
 - `--plugin-dir` と `--append-system-prompt-file` で同じ `skills/meeting/SKILL.md` をそのセッションだけに使用。初期ユーザー依頼で会議モードを開始。
-- `--dangerously-load-development-channels server:tactiq-live -- <開始依頼>`。可変長引数とpromptの間の `--` が必要。認証・権限・組織制限は迂回しない。
+- `--dangerously-load-development-channels server:live-support -- <開始依頼>`。可変長引数とpromptの間の `--` が必要。認証・権限・組織制限は迂回しない。
 
-ホーム／filesystem rootからの起動は拒否します。これはOSサンドボックスや全機密情報の検出ではありません。実Claudeでの拒否動作は受入確認が必要です。モデル環境変数は継承し、例は `ANTHROPIC_MODEL=haiku tactiq-live claude`。実Haikuの品質・速度・費用は未確認です。
+ホーム／filesystem rootからの起動は拒否します。これはOSサンドボックスや全機密情報の検出ではありません。実Claudeでの拒否動作は受入確認が必要です。モデル環境変数は継承し、例は `ANTHROPIC_MODEL=haiku live-support claude`。実Haikuの品質・速度・費用は未確認です。
 
 受信port使用中・別ランチャーのlockがある場合は二重起動を拒否。終了signalでは子の終了を待ってlockを解除します。直接 `server/main.js` を起動する開発用 `mcp.local.json` にはCLIの排他・起動ごとのtoken更新は適用されません。
 
@@ -86,7 +86,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 これは生成時刻による厳密な境界ではない。検証済みの生成時刻fieldがなく、受信時刻とID順序に依存するため、遅配・履歴を完全に見分ける保証はない。生成時刻での完全な区間分離が必要な会議には使わない。
 
-氏名・参加者一覧は収集せず、話者は「話者1（名前未確認）」等で区別する。内部device IDはモデルへ送らない。本人の役割は推測で決めない。
+参加者一覧は収集しない。話者名は画面に表示されている表示名を送る（読み取れないときだけ「話者N（名前未確認）」）。表示名は制御・双方向制御文字を除いて64文字に制限し、非信頼・未検証のラベルとして扱う。内部device IDと画像URLは送らない。本人の特定は `/meeting` スキルが本人に確認した名前だけを根拠にし、本人の発言は助言・要約・引用に含めない。本人の役割は推測で決めない。
 
 ### 一時停止・停止
 
@@ -104,8 +104,8 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 重要な変化に通常4／最大6行のカード。同じ相づちでは繰り返さず、途中は暫定、欠落は不明とする。資料は必要最小限読み、実在する根拠だけ示す。
 
-- /tactiq-live:meeting stop：助言停止。
-- /tactiq-live:meeting start：助言再開。
+- /live-support:meeting stop：助言停止。
+- /live-support:meeting start：助言再開。
 - **助言停止は転送停止ではない。字幕はChromeパネルで停止する。**
 
 プロジェクト切替はパネル停止 → 前のランチャー終了 → 次のprojectで起動 → 新tokenで再ペアリング。古いtokenは新しい受信先で認証されない。
@@ -116,13 +116,13 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 Meet限定 MAIN/document_start：RTCPeerConnectionを準備
  → 同意・health・標準字幕ON・接続確認
  → 既存の字幕チャネル、または自分のcaptions/captions_v2購読
- → bounded protobuf/gzip decode、初回ID除外、匿名話者、改訂upsert
+ → bounded protobuf/gzip decode、初回ID除外、話者名（画面の字幕と本文が一致し名前が1つに決まる場合のみ。それ以外は匿名）、改訂upsert
  → 通常page evalで自作hookからsnapshot／1秒heartbeat
- → CaptionStream → 約5秒のBearer POST /captions
+ → CaptionStream → まとめ方に応じたBearer POST /captions（既定は発話の区切りごと）
  → Host／Origin／schema／size／sequence検査 → Claude Channels
 ```
 
-extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、DOM本文・fetch・WebSocket・チャット・他拡張へfallbackしない。サイトのCSPと管理ポリシーに従う。
+extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、字幕本文をDOMから読むfallback・fetch・WebSocket・チャット・他拡張へfallbackしない。話者名の付与だけ、画面に表示された字幕リスト（`div[role=region][tabindex=0]`）を読み取り専用で走査し、本文が一致する行の名前が1つに決まる場合だけ使う（曖昧・字幕非表示では匿名のまま。DOMは書き換えない）。サイトのCSPと管理ポリシーに従う。
 
 同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
 
@@ -130,7 +130,7 @@ extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環�
 
 snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
-**Teams（v0.6、観測のみ・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入り、`main-channel` ラベルのチャネルを観測する。チャネルの作成・送信・DOM・トークン・アプリ内部状態の読取り、字幕の開始・言語設定はしない（Teams側でライブキャプションをONにするのは利用者）。フレームは先頭32文字以内の `{` 以降をJSONとして読み、`recognitionResults[]` のうち `timestampAudioSent` を持つ項目だけを使う（それ以外の制御通信、非JSON、256KB超、Blob／文字列は無視し、停止しない）。必須は `id`（`<id>/<版>`）・`userId`・`timestampAudioSent`（0以上の整数）・`text`（文字列、`rawText` は使わない）。必須項目の不正は `CAPTION_FORMAT_UNKNOWN`、`timestampAudioSent` は話者ごとの最初の値以下を除外（初回発話とその修正）、未知の古い値は `CAPTION_SEQUENCE_UNKNOWN`、同版で本文が違えば `CAPTION_REVISION_CONFLICT`。話者は `userId` の出現順で匿名化（`speaker-N`／「話者 N（名前未確認）」）し、名簿・表示名は読まない。会議IDはURLで特定できないため `<host>/call` 固定で、通話のPeerConnection終了（`RTC_CONNECTION_CLOSED`）・`main-channel` 終了・pagehideで停止する。lease・所有者・recover（失効後の自動復旧）はMeetと同じ規則。**形式はTactiq 3.1.7185の静的解析（実行なし）に基づき、実Teamsで未検証。**字幕OFF中は何も届かないが、OFFかどうかの判定（DOM）はしない。複数の `main-channel` 接続があれば `RTC_CONNECTION_AMBIGUOUS`。
+**Teams（画面字幕のDOM読取り・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0は `main-channel` のRTC観測だったが、実Teamsで字幕JSONの形式が合わず取得できなかったため、Zoomと同じ**画面に表示された字幕の読取り**へ切り替えた（RTCの観測・ラベル収集は廃止）。読むのは利用者がTeamsで表示させたライブキャプションのリスト `[data-tid="closed-caption-v2-virtual-list-content"]` だけ。チャネル・送信・トークン・アプリ内部状態・名簿は読まず、字幕の開始・言語設定もしない（Teams側でライブキャプションをONにするのは利用者）。discoverはリストの有無だけを見て本文には触れず、無ければ `TEAMS_CAPTIONS_NOT_FOUND`（開始不可）。開始後だけリストへMutationObserverを付け、readごとに再走査してリストの差し替えにも追従する。依存する構造は「本文の要素の親の直前の兄弟要素が話者ラベル」だけで、本文はあるのに該当行が1つも無いリストは `CAPTION_FORMAT_UNKNOWN` で停止する（推測しない）。話者ラベルは同一視のページ内キーにだけ使い、出現順に匿名化（`speaker-N`／「話者 N（名前未確認）」）して、表示名は送らない。行は要素単位で追跡し、同じ話者で先頭16文字が共通する本文は同じ発話の修正（Teamsは字幕をその場で訂正する）、そうでなければ新しい発話にする。開始・recover時に既に表示されていた行とその修正は送らず、再描画で新しい要素になった既出の発話は重複送信しない。DOMは書き換えない。診断は件数（字幕行・構造不明・受信・採用）と、字幕リスト周辺の `data-tid` 名（本文は含まない）だけ。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**セレクタと構造はTranscripTonic（MIT）の公開ソースを参考にした仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると停止する（その場合は診断のdata-tidで確認）。
 
 **Zoom（v0.7、画面字幕のDOM読取り・試験版）。** `zoom-hook.js` は app.zoom.us のtop frame（https）で、会議ページ `/wc/<5〜15桁>/…` にだけ入る（他の *.zoom.us は `PLATFORM_NOT_IMPLEMENTED`）。会議IDは `app.zoom.us/wc/<番号>`。Meet／Teamsのように通信チャネルから取れる経路は特定できず、状態ストア・ソケット・名簿は読まない方針のため、**ユーザーがZoomで表示させた字幕ボックス（`#webclient` iframe内の `.live-transcription-subtitle__box`）だけ**を読む。開始までは箱の中身に触れず（discoverはiframeの有無だけ）、開始後だけ箱へMutationObserverを付け、readごとに再走査して箱の差し替えにも追従する。依存する構造は「`<img>`（アバター）の次の兄弟要素が本文」だけで、本文はあるのに該当行が無い箱は `CAPTION_FORMAT_UNKNOWN` で停止する（推測しない）。話者はアバターURLのハッシュを出現順に匿名化（`speaker-N`、同じアバターは同一視）し、アバターURL・表示名・タイル名は送らない。行は要素単位で追跡し、本文が前の表示の続き（末尾追加、または先頭が欠けた続き）なら同じ発話の修正、無関係なら新しい発話にする。開始・recover時に既に表示されていた行とその続きは送らず、再描画で新しい要素になった既出の発話は重複送信しない。DOMは書き換えない。lease・所有者・recoverはMeetと同じ。**セレクタと構造はTranscripTonic（MIT）の公開ソースによる推定で、実Zoomでは未検証。**画面更新で壊れ得て、字幕が非表示の間は何も届かない。
 
@@ -167,7 +167,7 @@ bind先はloopbackのみ。`Authorization: Bearer <pairing-token>` が必要で�
 | meetingId | 1〜512文字、同sessionで固定 |
 | platform | schemaはGoogle Meet／Zoom／Teams。reader実装はMeet・Teams・Zoom（Webクライアント） |
 | updates | 1〜64件 |
-| messageId／deviceId | 1〜512文字。発話は区間内ローカルID、deviceIdは匿名話者ID（schemaでは任意） |
+| messageId／deviceId | 1〜512文字。発話は区間内ローカルID、deviceIdは匿名話者ID（schemaでは任意）。speakerNameは表示名（最大64文字に整形）または匿名ラベル |
 | messageVersion | 0以上のsafe integer。解釈できるprovider revision |
 | speakerName／transcript | 1〜256文字／0〜32768文字 |
 | timestamp／version | 非負有限数。timestampは採用時の受信Date.now()、versionはprovider revision。音声の生成／開始時刻ではない |
@@ -201,16 +201,17 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 
 未知のwire type・重複field・不正UTF8・過大整数等は無理に文字列化せず停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
-保存先は ~/.tactiq-live-channel/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
+保存先は ~/.live-support/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 
-TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
+LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
 
 ## 8. 診断・更新
 
 | コード／症状 | 対処 |
 | --- | --- |
 | RTC_HOOK_NOT_READY | Meetサイトアクセスを本人が許可し、拡張更新後にMeetタブを参加前から再読み込み |
-| RTC_CONNECTION_NOT_FOUND | 会議参加・標準字幕ON・参加前注入を確認。後から既存接続を見つける保証はない |
+| RTC_CONNECTION_NOT_FOUND | Meet：会議参加・標準字幕ON・参加前注入を確認。後から既存接続を見つける保証はない |
+| TEAMS_CAPTIONS_NOT_FOUND | Teamsのライブキャプションが画面に表示されていない。Teams側でONにして「再確認」 |
 | RTC_CONNECTION_AMBIGUOUS | 接続を特定できないため取得しない |
 | RTC_PREPARE_FAILED／RTC_RESOURCE_LIMIT | 他の字幕拡張との競合・管理ポリシー・上限を確認。安全機能を無効化しない |
 | CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認。OFFのまま使うなら実験オプション |
@@ -230,17 +231,17 @@ TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override�
 
 表示するのは既知コードと接続／字幕ch／受信／初回ID除外／採用の整数件数だけ。任意の例外details・生bytes・文字起こしは表示しない。会議URL、タイトル、本文、話者名、token、全DOM、HARを不具合報告へ貼らないこと。
 
-旧CAPTION_ROWS_NOT_FOUNDはv0.4のDOM方式。現在は字幕の子要素数に依存しない。更新は転送／ランチャー停止 → 再インストール → setup → 拡張再読込み・Meetサイトアクセス確認 → **Meetタブを参加前に再読み込み** → DevTools開き直し。削除はnpm uninstall --global tactiq-live-channel。ランタイムとChrome登録は自動削除しない。
+旧CAPTION_ROWS_NOT_FOUNDはv0.4のDOM方式。現在は字幕の子要素数に依存しない。更新は転送／ランチャー停止 → 再インストール → setup → 拡張再読込み・Meetサイトアクセス確認 → **Meetタブを参加前に再読み込み** → DevTools開き直し。削除はnpm uninstall --global live-support。ランタイムとChrome登録は自動削除しない。
 
 ## 9. 安全性と受入確認
 
-追加アクセスはcontent_scripts.matchesの **https://meet.google.com/**（v0.5）、Teams 3ホスト（**https://teams.microsoft.com／teams.live.com／teams.cloud.microsoft**、v0.6）、**https://app.zoom.us/**（v0.7）だけ。いずれも静的で、実行時の追加許可ダイアログは使わない（本人の指示）。Meetは実装前に本人がサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。Teams／Zoomは本人の「Zoom／Teams対応に進む」依頼による追加で、Teamsは通信の観測のみ、Zoomは表示字幕の読取りのみ（購読・送信・書込みなし）。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。拡張APIの権限は `storage`（パネルがtokenを`chrome.storage.session`へ記憶するためだけ。UI改善依頼で追加、実Chrome未検証）のみ。tabs／scripting／debugger／全サイト／音声権限は追加しない。
+追加アクセスはcontent_scripts.matchesの **https://meet.google.com/**（v0.5）、Teams 3ホスト（**https://teams.microsoft.com／teams.live.com／teams.cloud.microsoft**、v0.6）、**https://app.zoom.us/**（v0.7）だけ。いずれも静的で、実行時の追加許可ダイアログは使わない（本人の指示）。Meetは実装前に本人がサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。Teams／Zoomは本人の「Zoom／Teams対応に進む」依頼による追加で、TeamsとZoomは表示字幕の読取りのみ（購読・送信・書込みなし）。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。拡張APIの権限は `storage`（パネルがtokenを`chrome.storage.session`へ記憶するためだけ。UI改善依頼で追加、実Chrome未検証）のみ。tabs／scripting／debugger／全サイト／音声権限は追加しない。
 
 MAIN worldはページと同じJS環境で、OS／ページ隔離のsandboxではない。transport tokenは拡張パネルにのみ保持する。字幕・話者情報は非信頼データとして扱い、命令・ツール権限承認には使わない。自作channelの停止は元の会議接続を停止しない。
 
 ブリッジは本文をログ・ファイルへ保存しないが、ページ・パネルのメモリやClaude／Anthropic側には残り得る。転送字幕と参照資料の外部送信同意を別に確認する。受信時刻／初回IDの除外は、生成時刻での完全な区間分離ではない。
 
-非機密の本人管理会議での受入項目：早期注入、標準字幕ON/OFF、購読と実際のwire互換、初回ID／修正の非転送、新ID／修正の受信、pause／stop／非表示／移動／lease、元の字幕・音声・会議が維持されること、氏名の非推測、AIの根拠と未確定事項、実Claudeでの秘密・dir外Read拒否と編集／Shell非公開、助言停止と転送停止の区別。Teamsは `main-channel` の実際のメッセージ形式・字幕ON時だけ届くこと・複数接続の有無も確認する。Zoomは字幕の表示が必要で、セレクタ・iframe構造・話者のアバター同一視が実Zoomで成立するかも確認する。
+非機密の本人管理会議での受入項目：早期注入、標準字幕ON/OFF、購読と実際のwire互換、初回ID／修正の非転送、新ID／修正の受信、pause／stop／非表示／移動／lease、元の字幕・音声・会議が維持されること、氏名の非推測、AIの根拠と未確定事項、実Claudeでの秘密・dir外Read拒否と編集／Shell非公開、助言停止と転送停止の区別。TeamsとZoomは字幕の表示が必要で、Teamsはセレクタ・話者ラベルの構造、Zoomはセレクタ・iframe構造・話者のアバター同一視が実機で成立するかも確認する。
 
 ## 10. 開発・検証資料
 
@@ -252,7 +253,7 @@ npm audit --omit=dev
 
 Node標準test runner。合成protobuf／gzip／不正・上限・signed-int64境界・consent／lease／owner／遅延結果、panelとreadonly CLI、実HTTP／SDK MCP、再送／EOF、packing／隔離導入を検証する。
 
-実Chromeテストは独立した一時profileとfile fixture、テスト用Meet／Teams／Zoom URL stub（Zoomは合成の字幕DOM）を使い、**実際の2つのRTCPeerConnection**で合成バイナリを送受信し、own ACK・停止・leaseとHTTP/MCP通知を確認する。実Meetやアカウントは使わない。Chromeがなければskipするため、その場合はブラウザ確認済みと報告しない。
+実Chromeテストは独立した一時profileとfile fixture、テスト用Meet／Teams／Zoom URL stub（Teams・Zoomは合成の字幕DOM）を使い、**実際の2つのRTCPeerConnection**で合成バイナリを送受信し、own ACK・停止・leaseとHTTP/MCP通知を確認する。実Meetやアカウントは使わない。Chromeがなければskipするため、その場合はブラウザ確認済みと報告しない。
 
 **実Meetの現行wire、document_start拡張の実ロード／サイトCSP、実DevToolsから実会議、実Claude／Haikuのモデル受信・権限強制、長時間の精度・欠落率・費用は未確認**。ローカルRTC成功はこれらの代替証拠ではない。
 

@@ -8,7 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { prepareToken } from "../server/token.js";
 
 async function runtime(t) {
-  const dir = await mkdtemp(join(tmpdir(), "tactiq-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "live-support-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -29,9 +29,9 @@ test("real MCP stdio initialization and HTTP caption delivery emit a channel eve
   const dir = await runtime(t);
   const transport = new StdioClientTransport({
     command: process.execPath, args: [resolve("server/main.js")],
-    env: { TACTIQ_RUNTIME_DIR: dir, TACTIQ_PORT: "0" }, stderr: "pipe",
+    env: { LIVE_SUPPORT_RUNTIME_DIR: dir, LIVE_SUPPORT_PORT: "0" }, stderr: "pipe",
   });
-  const client = new Client({ name: "tactiq-test", version: "1" }, { capabilities: {} });
+  const client = new Client({ name: "live-support-test", version: "1" }, { capabilities: {} });
   t.after(() => client.close());
   let receive;
   const event = new Promise(r => { receive = r; });

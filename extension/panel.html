@@ -16,13 +16,19 @@
     <p id="status" role="status" aria-live="polite">字幕（Meetの字幕／Teamsのライブキャプション／Zoomの字幕）がONの会議タブで、このパネルを開いたまま使います。</p>
     <section id="setup">
       <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
-      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値">
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="live-support token の値">
       <label for="meeting">会議</label>
       <div class="row">
         <select id="meeting"><option value="">未確認（再確認を押してください）</option></select>
         <button id="refresh" type="button">再確認</button>
       </div>
-      <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱いを確認しました</label>
+      <label for="batch">転送のまとめ方</label>
+      <select id="batch">
+        <option value="pause" selected>発話の区切りごと（3秒静かになったら／最大45秒）</option>
+        <option value="30">約30秒ごと</option>
+        <option value="5">約5秒ごと（細かく）</option>
+      </select>
+      <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱い（字幕本文と話者の表示名が送られます）を確認しました</label>
       <label class="consent"><input id="assist" type="checkbox">実験（Meetのみ）：字幕ボタンがOFFでも開始する（Meetの字幕設定を1回だけ書き込みます。既定OFF・再試行なし）</label>
     </section>
     <div class="actions">
@@ -33,10 +39,10 @@
     <details>
       <summary>仕組みと注意事項</summary>
       <ul>
-        <li>Meet・Teams・Zoom（Webクライアント）の字幕を約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
-        <li>会議参加前に拡張を準備してください。更新時は会議タブを再読み込みして参加し、字幕の表示はユーザーが開始します。Teamsは字幕通信の観測のみ、Zoomは画面に表示された字幕の読取り（画面は書き換えません）で、字幕の開始や購読はしません。</li>
+        <li>Meet・Teams・Zoom（Webクライアント）の字幕を、発話の区切りごと（既定。3秒静かになるか最大45秒で）または約30秒／約5秒ごとにまとめて、ローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
+        <li>会議参加前に拡張を準備してください。更新時は会議タブを再読み込みして参加し、字幕の表示はユーザーが開始します。Meetは字幕通信（データチャネル）の観測、TeamsとZoomは画面に表示された字幕の読取り（画面は書き換えません）で、字幕の開始や購読はしません。Teamsのライブキャプションはユーザーが自分でONにします。</li>
         <li>転送した字幕はClaude Codeを通じてAnthropicへ送信されます。同意後だけ本文を処理し、Meetでは必要時に既存の会議接続へ自分の字幕チャネルを追加して受信確認を返します。</li>
-        <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。氏名は取得せず「話者1（名前未確認）」等で識別します。</li>
+        <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。話者は画面に表示された名前で識別し（読み取れない間は「話者1（名前未確認）」）、相手の表示名もAnthropicへ送られます。</li>
         <li>読取りが約2秒途切れても自動で復旧しますが、途切れた間の字幕は取得できません。手動で停止・一時停止した後は自動再開しません。</li>
         <li>一時停止で未処理分は破棄し、新しい字幕は処理・保持・送信しません。送信済みのデータは取り消せません。</li>
         <li>実会議での互換性は未確認です（Teams・Zoomは実機未検証）。Zoomのデスクトップ版は対象外です。このパネルを離れると停止します。</li>
