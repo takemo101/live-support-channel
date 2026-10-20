@@ -10,6 +10,7 @@
   const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
   const LIMIT = 262144, peers = new Set(), tracked = new WeakMap();
   let prepareError = null;
+  const labels = new Set();
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
   const currentMeeting = () => page.location.protocol === "https:" && hosts.has(page.location.hostname) ? `${page.location.hostname}/call` : null;
@@ -68,6 +69,7 @@
   function receive(entry, event) {
     const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
+    s.stats.frames++;
     try {
       const items = results(event.data); if (!items) return;
       for (const raw of items) { ingest(s, raw); if (life.current !== s) return; }
@@ -88,6 +90,8 @@
     return record;
   }
   function attach(connection, channel) {
+    // Labels are non-sensitive and only help diagnose a different Teams channel layout.
+    if (typeof channel.label === "string" && /^[A-Za-z0-9_.-]{1,32}$/.test(channel.label) && labels.size < 16) labels.add(channel.label);
     if (channel.label !== "main-channel") return null;
     for (const entry of connection.channels) if (entry.channel === channel) return entry;
     if (connection.channels.size >= 32) { prepareError = "RTC_RESOURCE_LIMIT"; finish(prepareError); return null; }
@@ -109,7 +113,7 @@
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
     return { status: "ready", source: "teams-rtc-experimental", platform: "Teams",
       meetings: id ? [{ id, title: "Microsoft Teams（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(live).length : 0, ...stats } };
+      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(live).length : 0, ...stats, channelLabels: [...labels] } };
   }
   function command(params = {}) {
     const early = life.prologue(params, metadata); if (early) return early;
@@ -121,7 +125,7 @@
       const target = candidates()[0]; life.clearTerminal();
       life.activate({ owner: captureId, meetingId, connection: target, entries: new Set([...target.channels].filter(live)),
         records: new Map(), speakers: new Map(), characters: 0, started: now(),
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } });
+        stats: { frames: 0, received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } });
     }
     return life.epilogue(params, { platform: "Teams", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []) });
   }

@@ -406,3 +406,10 @@ test("Zoom frame and unsupported-host refusals are explained", async t => {
     assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
   }
 });
+test("diagnostic counters and sanitized channel labels are shown, nothing else", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { peers: 1, frames: 4, channelLabels: ["main-channel", "bad label<x>", "collections", 7], secret: "PRIVATE" };
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /フレーム=4/); assert.match(s.elements.status.textContent, /main-channel,collections/);
+  assert.ok(!s.elements.status.textContent.includes("bad label") && !s.elements.status.textContent.includes("PRIVATE"));
+});

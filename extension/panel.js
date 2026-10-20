@@ -45,9 +45,11 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
   };
   function statistics(d) {
-    return [["peers", "接続"], ["captionChannels", "字幕ch"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
+    const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["frames", "フレーム"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
       .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
-      .map(([key, label]) => `${label}=${d[key]}`).join("／");
+      .map(([key, label]) => `${label}=${d[key]}`);
+    const labels = Array.isArray(d?.channelLabels) ? d.channelLabels.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,32}$/.test(l)).slice(0, 8) : [];
+    return [...counts, ...(labels.length ? [`ラベル=${labels.join(",")}`] : [])].join("／");
   }
   function describe(result) {
     const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";

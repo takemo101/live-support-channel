@@ -157,3 +157,16 @@ test("the shared core is handed over once and never stays reachable by page scri
   vm.runInContext((await readFile(new URL("../extension/teams-hook.js", import.meta.url), "utf8")), vm.createContext({ window: lone }));
   assert.equal(lone[key], undefined, "a hook without its core installs nothing");
 });
+test("diagnostics list observed channel labels (sanitized, bounded) and count frames seen while capturing", t => {
+  const f = fixture(t);
+  for (const label of ["media-session", "bad label\n<x>", "x".repeat(64)]) f.pc.createDataChannel(label);
+  for (let i = 0; i < 30; i++) f.pc.createDataChannel("extra-" + i);
+  const meta = f.command("discover"), labels = plain(meta.diagnostics.channelLabels);
+  assert.ok(labels.includes("main-channel") && labels.includes("collections") && labels.includes("media-session"));
+  assert.ok(labels.every(l => /^[A-Za-z0-9_.-]{1,32}$/.test(l)) && labels.length <= 16);
+  f.channel.message(encode("before start")); assert.equal(f.command("discover").diagnostics.frames ?? 0, 0);
+  f.command("start"); f.channel.message(encode("unrelated")); f.channel.message(encode({ other: 1 })); f.say(item(1, "u", 1, "boundary"));
+  const diagnostics = f.command("read").diagnostics;
+  assert.equal(diagnostics.frames, 3); assert.equal(diagnostics.received, 1);
+  f.command("reset");
+});
