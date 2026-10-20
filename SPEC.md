@@ -1,8 +1,8 @@
 # Live Captions → Claude Code：使い方と仕様
 
-バージョン：0.4.0。最終更新：2026-10-20。
+バージョン：0.5.0。最終更新：2026-10-20。
 
-> **Meet標準字幕の試験版。実会議の互換性は未確認です。** 実Chromeの合成DOM、実ローカルHTTP／MCP stdio通知、隔離CLI導入を検証しています。実Meet／DevTools接続／実Claudeのモデル応答・権限強制は別の受入確認です。Zoom／Teamsの取得処理は未実装です。
+> **Meet字幕通信の試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire、実HTTP／MCP通知を検証。実Meet／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Zoom／Teams取得は未実装です。
 
 ## 1. 目的と範囲
 
@@ -11,25 +11,25 @@ Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッ�
 実装範囲：
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
-- Meetの認識可能な標準字幕DOMだけを読取る独立reader。
-- 明示的な開始・一時停止・再開・停止。ページ移動・パネル非表示・不明な構造では停止。
-- 約1秒の読取り、約5秒の差分送信。新規行と同じ行の修正を区別。
+- Meet限定の参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。
+- 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
+- 約1秒のsnapshot／heartbeat、約5秒の差分送信。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 
 対象外：Zoom／Teamsのreader、デスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
 
-字幕は表示中の一部分です。消失・省略・行再利用により欠ける可能性があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
+字幕は取得できた一部分です。初回ID除外、通信遅延・欠落等があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
 
 ## 2. 条件と取得対象
 
 | 項目 | 条件 |
 | --- | --- |
 | Node.js | 22以上（検証24.15.0） |
-| Chrome | 125以上、DevTools使用（合成DOM検証155） |
-| Meet | `meet.google.com/xxx-xxxx-xxx` のtop frame。標準字幕ON・表示中 |
+| Chrome | 125以上、DevTools使用（ローカルRTC検証155） |
+| Meet | httpsのmeet.google.com会議top frame。参加前にフック準備、標準字幕ON |
 | UI言語 | 字幕ボタンの判定は日本語／英語。その他は未対応として停止 |
-| Tactiq | 不要。標準字幕を隠す設定の場合は取得しない |
+| Tactiq | 不要。他字幕拡張との同居は未確認 |
 | Claude Code | Channels・restricted・セッションplugin・Skill Shell前処理無効化に対応。CLI確認2.1.302／2.1.303 |
 | 認証／port | Channelsを許可されたAnthropic認証・組織設定、`127.0.0.1:43821` が使用可能 |
 | OS | 0700／0600とsymlink拒否を使用。検証はmacOS |
@@ -73,56 +73,63 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 ## 4. 会議での操作
 
 1. 参加者同意、組織規程、Anthropic側のデータ取扱いを確認する。
-2. Meet会議内の**標準字幕**をONにして発話する。Chrome全体の自動字幕ではない。
-3. その会議タブのDevTools → **Live Captions** を開く。見えなければ `»` を確認。
-4. tokenを貼り、「標準字幕を確認」→ 会議選択 → 同意確認 → 転送開始。
-5. パネルを開いたまま使う。新しい行から転送する。
+2. **会議参加前**に拡張を読み込み、Meetだけのサイトアクセスを本人が許可する。更新時はMeetタブを再読み込みしてから参加する。
+3. Meet内の標準字幕をONにする。Chrome全体の自動字幕ではない。
+4. そのタブのDevTools → **Live Captions**。「Meet字幕通信の準備を確認」→ token入力・会議選択 → 同意 → 転送開始。
+5. パネルを表示したまま使う。起動直後から参照するプロジェクトも非機密の範囲を選ぶ。
 
-確認操作はURL、字幕ボタン、領域・行構造のmetadataだけを調べ、本文・話者・会議タイトルを取得しません。開始の同意後、認証済み `/health` を確認してから基準snapshotを読取ります。
+準備中・確認操作はURL、字幕ボタン、接続／チャネルの状態・件数だけを扱い、字幕本文や会議タイトルは読まない。認証済み /health と同意の確認後に取得を開始する。接続が複数で特定できない場合は開始しない。
 
-開始／再開時点にある行のIDは、後の修正や続きも除外します。過去prefixの混入を防ぐためで、その行が継続する間は新しい内容も届きません。常時同じ行を使うUIでは転送できない可能性があります。
+### 開始・再開とプライバシー
 
-### 独立した一時停止・再開
+各話者の最初に観測した発話IDを基準に、**そのID以前と全修正を除外**する。次の大きなIDから取得する。最初の質問・新しい話者の初回発話・長い継続発話が届かない可能性がある。
 
-- パネルの一時停止でtimerを解除し、読取り・送信を止め、未送信分・未確認バッチを破棄します。
-- 再開は接続・会議を再確認して現在の行を再基準化し、新しい送信sessionを作ります。停止期間は取り戻しません。
-- **Tactiqのpauseとは連動しません。** Tactiqを止めても本readerは止まりません。
+これは生成時刻による厳密な境界ではない。検証済みの生成時刻fieldがなく、受信時刻とID順序に依存するため、遅配・履歴を完全に見分ける保証はない。生成時刻での完全な区間分離が必要な会議には使わない。
 
-### 停止
+氏名・参加者一覧は収集せず、話者は「話者1（名前未確認）」等で区別する。内部device IDはモデルへ送らない。本人の役割は推測で決めない。
 
-停止ボタン、パネル非表示／pagehide、ページ移動、会議不一致、字幕OFF・消失・未知構造、曖昧な行／領域置換、取得上限、HTTP 4xxで停止します。明示停止後に自動再開しません。サーバーはstdin EOF／SIGINT／SIGTERMで閉じます。
+### 一時停止・停止
 
-停止時点で発行済みの読取り・送信や、送信済みの情報は取り消せません。遅れて返った結果が停止・再開を覆さないよう世代番号とcapture所有者を検査します。
+- 一時停止でtimer・未送信分・未確認バッチを破棄し、自分が追加したチャネルを閉じる。本文の処理・保持・送信を止める。準備済みフック自体は残るが、休止中はMessageEvent.dataへアクセスしない。
+- 未処理payloadは可変キューから即時解放する。実行中のgzip readerはcancelし、取消不能な読取り最大1件は結果を無効化する。その終了まではCAPTION_DECODE_BUSYで新captureを拒否する。
+- 再開時は新しいcapture所有者・送信sessionを作り、各話者の初回IDを再基準化する。休止期間は取り戻さない。
+- **Tactiqのpauseとは連動しない。** Tactiqを止めても本readerは止まらない。
+- 停止、pagehide、ページ移動、字幕OFF、未知形式、順序／修正の矛盾、チャネル終了、上限、HTTP4xxで停止。自動再購読しない。
+- パネルは約1秒でheartbeatを送り、約2秒のleaseが切れたら本文を破棄して自分のチャネルを閉じる。元のアプリのチャネル・PeerConnectionは閉じない。
+- Main worldとDevToolsは非同期なので、停止指示の到達前や発行済み処理は即時取消できない。各frameと非同期decode後にも所有者・leaseを確認し、失効した結果を送らない。
+- 受信サーバーはstdin EOF／SIGINT／SIGTERMで閉じる。送信済み情報を消す機能はない。
 
-### 会議支援
+### 会議支援と切替
 
-重要な質問・要求・決定・話題変更に通常4／最大6行のカードを出します。同じ相づちでは繰り返さず、途中は暫定、欠落は不明とします。必要な資料だけ読み、実在する根拠を示します。
+重要な変化に通常4／最大6行のカード。同じ相づちでは繰り返さず、途中は暫定、欠落は不明とする。資料は必要最小限読み、実在する根拠だけ示す。
 
-- `/tactiq-live:meeting stop`：助言を停止。
-- `/tactiq-live:meeting start`：助言を再開。
-- **助言停止だけでは転送は止まりません。字幕はChromeパネルで停止してください。**
+- /tactiq-live:meeting stop：助言停止。
+- /tactiq-live:meeting start：助言再開。
+- **助言停止は転送停止ではない。字幕はChromeパネルで停止する。**
 
-プロジェクト切替はパネル停止 → 前のランチャー終了 → 次のprojectで起動 → 新tokenで再ペアリングです。tokenは起動ごとに更新され、古いパネルが新しい受信先へ送れません。
+プロジェクト切替はパネル停止 → 前のランチャー終了 → 次のprojectで起動 → 新tokenで再ペアリング。古いtokenは新しい受信先で認証されない。
 
 ## 5. readerとデータ経路
 
 ```text
-Meet標準字幕DOM（既知構造のみ、top frame）
- → 通常のinspectedWindow.eval（他拡張context指定なし）
- → 同意後の1秒取得／上限付きメモリバッファ
- → CaptionStream：baseline除外・ID単位のupsert・約5秒送信
- → Bearer付きPOST /captions（127.0.0.1:43821）
- → Host／Origin／schema／size／sequence検査
- → notifications/claude/channel → 許可されたClaude Code
+Meet限定 MAIN/document_start：RTCPeerConnectionを準備
+ → 同意・health・標準字幕ON・接続確認
+ → 既存の字幕チャネル、または自分のcaptions/captions_v2購読
+ → bounded protobuf/gzip decode、初回ID除外、匿名話者、改訂upsert
+ → 通常page evalで自作hookからsnapshot／1秒heartbeat
+ → CaptionStream → 約5秒のBearer POST /captions
+ → Host／Origin／schema／size／sequence検査 → Claude Channels
 ```
 
-`extension/snapshot.js` の自己完結した `readCaptions({ action, meetingId, captureId })` をページ内で評価します。`discover` はmetadataのみ、`start` は所有者付き基準化、`read` は同じ会議・所有者の読取り、`reset` は一致する所有者だけを解放します。
+extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、DOM本文・fetch・WebSocket・チャット・他拡張へfallbackしない。サイトのCSPと管理ポリシーに従う。
 
-旧 `.a4cQT` 系とregion系を別profileとして扱います。region系は字幕の明示ラベル、または字幕ボタンの `aria-controls` 関連付けも必要です。汎用regionの子配置だけでは取得しません。既知の行と話者／本文の組合せを限定し、ページ全体の `innerText`、翻訳別データ、privateな通信／Redux／別拡張状態へfallbackしません。
+同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
 
-行DOMのWeakMap IDとローカルrevisionを使います。重複表示・retired行再登場・根拠のない先頭挿入・全行／root置換等で区別できなければ停止します。元DOMは変更しません。ソース根拠と未検証の仮定は [native-captions.md](docs/native-captions.md) を参照。
+snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
-主な責務：`panel.js` はUI・timer・上限付き蓄積・世代管理・HTTP、`stream.js` は差分／baseline／再送、`devtools.js` は登録と非表示停止、`server/bridge.js` は入力検査と通知、`server/main.js` はMCP／HTTP lifecycle、`server/runtime.js`／`token.js` は専用保存先とtoken、`bin/tactiq-live.js` はsetup／readonly起動／排他です。
+正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert、未知の逆順IDや同番号異本文は停止する。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
+
+panel.jsは同意・UI・世代管理・heartbeat・蓄積・HTTP、stream.jsは差分／再送、devtools.jsは非表示停止。bin、server、Skillの既存責務とreadonly設定は維持する。
 
 ## 6. HTTP／Channels契約
 
@@ -151,10 +158,10 @@ bind先はloopbackのみ。`Authorization: Bearer <pairing-token>` が必要で�
 | meetingId | 1〜512文字、同sessionで固定 |
 | platform | schemaはGoogle Meet／Zoom／Teamsを維持。reader対応を意味しない |
 | updates | 1〜64件 |
-| messageId／deviceId | 1〜512文字。deviceIdは任意、DOM readerでは省略 |
-| messageVersion | 0以上のsafe integer。ローカル観測revision |
+| messageId／deviceId | 1〜512文字。発話は区間内ローカルID、deviceIdは匿名話者ID（schemaでは任意） |
+| messageVersion | 0以上のsafe integer。解釈できるprovider revision |
 | speakerName／transcript | 1〜256文字／0〜32768文字 |
-| timestamp／version | 非負有限数。timestampは初回DOM観測のDate.now()、versionは1から始まるローカルrevision。音声開始時刻やproviderの版番号ではない |
+| timestamp／version | 非負有限数。timestampは採用時の受信Date.now()、versionはprovider revision。音声の生成／開始時刻ではない |
 
 列挙外のtop-level／blockフィールドは拒否。成功202はSDK通知の書出し成功であり、AIの受領・理解・応答完了ではありません。
 
@@ -164,55 +171,66 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 
 ## 7. 差分・再送・上限
 
-1. 開始時の既存IDを永続的にその送信区間から除外する。
-2. 1秒読取りで現在行をメモリにupsertし、消えた行の最後の観測値も保持する。全字幕を保証はしない。
-3. 約5秒ごとに最新の状態確認後、差分を一バッチ送る。HTTP待ち中も取得は継続。
-4. 成功後だけbaseline／sequenceを進める。失敗・5xxでは次回に**同じ未確認バッチ**を先に再送する。
-5. サーバーは配送を直列化し、session sequenceとbody digestで直前の同一配送を再通知しない。
-6. pause／stopで未送信分を破棄。再起動をまたぐ重複抑止や取り消しは保証しない。
+同意後のMessageEventだけを処理し、信頼されない合成event・対象外チャネルは本文に触れず無視する。各話者の初回ID以前を除外し、採用した新IDと修正をメモリにupsertする。HTTP待ち中も取得を続け、約5秒で一バッチ送る。
+
+成功後だけbaseline／sequenceを進める。失敗・5xxでは**同じ未確認バッチ**を先に再送する。サーバーは直列化し、session sequenceとbody digestで直前の同一配送を再通知しない。pause／stopは未送信分を破棄し、永続キュー・再起動をまたぐ重複抑止は保証しない。
 
 | 項目 | 値 |
 | --- | --- |
-| 読取り／送信 | 約1000／5000 ms。非同期読取りは単一処理 |
-| fetch timeout | 8000 ms。通信中の追加sendはskip |
-| snapshot・captureバッファ | 各最大4000 blocks／本文計200万文字。上限で停止 |
+| heartbeat／send／lease | 約1000／5000／2000 ms |
+| RTC候補／既知チャネル | 最大16接続、接続ごと最大32 |
+| wire／展開後 | 各262144 bytes。gzipはlegacy profileのみ |
+| wire構造 | 各message最大64 fields、既知構造だけ最大3層 |
+| 処理待ち／話者 | 最大8 frames／256話者 |
+| captureをまたぐ実行中読取り | 最大1件。終了するまで新capture不可 |
+| own-v2 ACK送信待ち | bufferedAmount＋次のACKで最大16384 bytes |
+| source・panelバッファ | 各最大4000 IDs／本文計200万文字 |
 | block／batch | 本文32768文字、最大64更新／block JSON計240000 bytes |
+| fetch timeout | 8000 ms |
 | HTTP body／request・header timeout | 262144 bytes／各10000 ms |
 | keep-alive／同時接続／session保持 | 1000 ms／16／1プロセス最大32 |
 
-黙って切り捨てません。大量差分は後続の送信tickになります。バッファは送信区間単位で保持し、pause／stopで破棄するため、長時間運用では上限に達し得ます。
+未知のwire type・重複field・不正UTF8・過大整数等は無理に文字列化せず停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
-保存先 `~/.tactiq-live-channel/` は0700、tokenは0600。symlink・公開権限は拒否。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新します。tokenコマンドだけが値を明示表示します。通常ログ・ブラウザ永続storageには残しません。
+保存先は ~/.tactiq-live-channel/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザ永続storageには残さない。tokenはMAIN worldへ渡さない。
 
-`TACTIQ_RUNTIME_DIR` でCLI／serverの保存先、`TACTIQ_PORT` でserver portを変更できます。開発用であり、**パネルとCSPは43821固定**。tokenをMCP設定へ埋め込みません。
+TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
 
 ## 8. 診断・更新
 
-| 表示／症状 | 対処 |
+| コード／症状 | 対処 |
 | --- | --- |
-| CAPTIONS_OFF／CAPTIONS_NOT_FOUND／CAPTION_ROWS_NOT_FOUND | Meet内の標準字幕をONにし、発話後に再確認 |
-| CAPTIONS_HIDDEN | Tactiqによる標準字幕の非表示を解除。自動解除はしない |
-| CAPTION_CONTROL_NOT_FOUND／CAPTION_IDENTITY_UNKNOWN／CAPTION_LAYOUT_UNKNOWN | UI言語／未知構造。無理に取得せず停止 |
-| AMBIGUOUS_CAPTIONS／CAPTION_SURFACE_CHANGED | 安全に同じ字幕と判断できない。再確認・新区間開始、過去分は復元しない |
-| PLATFORM_NOT_IMPLEMENTED | Zoom／Teams readerは未実装 |
-| PAGE_ACCESS_DENIED／FRAME_NOT_FOUND | 対象タブ・管理ポリシーを確認。権限拡大やChromeの安全機能無効化をしない |
-| 上限／HTTP 413 | 停止して非機密fixtureで確認。本文を黙って削らない |
-| HTTP 401／409／429／503 | 新token／再ペアリング、系列不一致、session上限、MCP初期化を確認 |
-| 最初の発話が来ない | 現在行は修正・続きも除外。次の新行で確認 |
-| HTTP成功でもAIに来ない | channelとしての有効化、Claudeの認証・組織設定を確認 |
-| launcher.lockが残る | 前のプロセス終了を確認。クラッシュ時だけ本人が削除。稼働中は消さない |
+| RTC_HOOK_NOT_READY | Meetサイトアクセスを本人が許可し、拡張更新後にMeetタブを参加前から再読み込み |
+| RTC_CONNECTION_NOT_FOUND | 会議参加・標準字幕ON・参加前注入を確認。後から既存接続を見つける保証はない |
+| RTC_CONNECTION_AMBIGUOUS | 接続を特定できないため取得しない |
+| RTC_PREPARE_FAILED／RTC_RESOURCE_LIMIT | 他の字幕拡張との競合・管理ポリシー・上限を確認。安全機能を無効化しない |
+| CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認 |
+| CAPTION_SUBSCRIPTION_FAILED | チャネル作成失敗。字幕・組織設定・拡張競合を確認 |
+| CAPTION_FORMAT_UNKNOWN | 未対応wire。本文／生パケットを共有せずコードと件数を報告 |
+| CAPTION_DECODE_BUSY | 前の取消不能読取りの終了待ち。待って再確認、止まる場合は非機密テストでページ再読み込み |
+| CAPTION_ACK_BACKLOG_LIMIT | 自分のACK出力上限。自分の購読だけ閉じて停止、通信状態を確認 |
+| CAPTURE_EXPIRED | heartbeat途絶で破棄。表示を維持して再確認・開始 |
+| CAPTION_CHANNEL_CLOSED／RTC_CONNECTION_CLOSED | 接続終了。自動では再購読しない |
+| CAPTION_SEQUENCE_UNKNOWN／CAPTION_REVISION_CONFLICT | IDや修正の同一性が不明のため停止 |
+| CAPTION_LIMIT／CAPTION_BACKLOG_LIMIT／CAPTURE_BUFFER_LIMIT | 無言で削らず停止。非機密fixtureで確認 |
+| HTTP401／409／429／503 | 新token、系列不一致、session上限、MCP初期化を確認 |
+| 受信はあるが採用0 | 各話者の初回ID以前は除外。次のIDから確認 |
+| HTTP成功でもAIに来ない | channelとしての有効化、Claude認証／組織設定を確認 |
+| launcher.lock | 前のプロセス終了を確認。クラッシュ時だけ本人が削除。稼働中に消さない |
 
-不具合報告は診断コード・領域／行数・版番号だけにし、会議本文・会議URL・タイトル・話者・tokenを貼らないでください。旧版の「Tactiqを確認できません」は他拡張contextアクセス制限に起因したため、その取得経路は削除しました。
+表示するのは既知コードと接続／字幕ch／受信／初回ID除外／採用の整数件数だけ。任意の例外details・生bytes・文字起こしは表示しない。会議URL、タイトル、本文、話者名、token、全DOM、HARを不具合報告へ貼らないこと。
 
-更新は転送／ランチャー停止 → 再インストール → `tactiq-live setup` → Chrome拡張再読込み → DevTools開き直し。削除は `npm uninstall --global tactiq-live-channel`。ランタイムとChrome登録は保持されるため、不要なら全プロセス終了後に本人が確認して削除します。
+旧CAPTION_ROWS_NOT_FOUNDはv0.4のDOM方式。現在は字幕の子要素数に依存しない。更新は転送／ランチャー停止 → 再インストール → setup → 拡張再読込み・Meetサイトアクセス確認 → **Meetタブを参加前に再読み込み** → DevTools開き直し。削除はnpm uninstall --global tactiq-live-channel。ランタイムとChrome登録は自動削除しない。
 
 ## 9. 安全性と受入確認
 
-拡張権限はloopback hostだけで、storage／tabs／scripting／debuggerや一般web host permissionは追加しません。通常page contextの読取りを使い、他拡張のisolated worldは使いません。
+追加アクセスはcontent_scripts.matchesの **https://meet.google.com/** だけ。実装前に本人がMeetサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。storage／tabs／scripting／debugger／全サイト／音声権限は追加しない。
 
-本文はブリッジのログ・ファイルには保存しませんが、ページとパネルのメモリ、Claude Code／Anthropic側に残り得ます。**転送字幕と読取ったプロジェクト資料はAnthropicへ送られ得ます。** 本機能はローカル処理だけではありません。会議や資料の命令による秘密読取り・外部送信・権限承認は禁止です。
+MAIN worldはページと同じJS環境で、OS／ページ隔離のsandboxではない。transport tokenは拡張パネルにのみ保持する。字幕・話者情報は非信頼データとして扱い、命令・ツール権限承認には使わない。自作channelの停止は元の会議接続を停止しない。
 
-本人管理の非機密テスト会議で確認する事項：開始前行とその修正の除外、新行と修正の受信、pause中と再開baselineの非転送、stop／画面移動／パネル切替、字幕OFF、Claude終了時のreceiver終了、短い根拠付き返答案、未確定事項の非断定、実Claudeでの秘密・作業dir外Read拒否と編集／Shellの非公開、助言停止と転送停止の区別。Zoom／Teamsを対応済みと扱わないでください。
+ブリッジは本文をログ・ファイルへ保存しないが、ページ・パネルのメモリやClaude／Anthropic側には残り得る。転送字幕と参照資料の外部送信同意を別に確認する。受信時刻／初回IDの除外は、生成時刻での完全な区間分離ではない。
+
+非機密の本人管理会議での受入項目：早期注入、標準字幕ON/OFF、購読と実際のwire互換、初回ID／修正の非転送、新ID／修正の受信、pause／stop／非表示／移動／lease、元の字幕・音声・会議が維持されること、氏名の非推測、AIの根拠と未確定事項、実Claudeでの秘密・dir外Read拒否と編集／Shell非公開、助言停止と転送停止の区別。Zoom／Teamsを対応済みと扱わない。
 
 ## 10. 開発・検証資料
 
@@ -222,11 +240,14 @@ npm test
 npm audit --omit=dev
 ```
 
-Node標準test runner。Chrome API境界のunitテスト、実Chromeの合成DOM（独立profile、テスト用URL stub）、合成DOMから実HTTP／SDK MCP通知、privacy／再送／EOF、packing、隔離npm導入、CLI引数・signal cleanupを検証します。Chrome testは実行ファイルがなければskipするので、その場合はブラウザ確認済みと報告しません。
+Node標準test runner。合成protobuf／gzip／不正・上限・signed-int64境界・consent／lease／owner／遅延結果、panelとreadonly CLI、実HTTP／SDK MCP、再送／EOF、packing／隔離導入を検証する。
 
-**実MeetのDOM・DevTools extension APIでの実会議接続、実Claude／Haikuのモデル受信・権限強制、長時間の遅延・費用・欠落率は未確認**。合成fixtureは公開ソース由来の候補構造であり、現在のMeetそのものではありません。
+実Chromeテストは独立した一時profileとfile fixture、テスト用Meet URL stubを使い、**実際の2つのRTCPeerConnection**で合成バイナリを送受信し、own ACK・停止・leaseとHTTP/MCP通知を確認する。実Meetやアカウントは使わない。Chromeがなければskipするため、その場合はブラウザ確認済みと報告しない。
 
-- [README](README.md)／[readerの根拠・制限](docs/native-captions.md)／[REAレポート](docs/rea-analysis-report.md)
+**実Meetの現行wire、document_start拡張の実ロード／サイトCSP、実DevToolsから実会議、実Claude／Haikuのモデル受信・権限強制、長時間の精度・欠落率・費用は未確認**。ローカルRTC成功はこれらの代替証拠ではない。
+
+- [README](README.md)／[wire根拠・制限](docs/native-captions.md)／[REAレポート](docs/rea-analysis-report.md)
+- [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)／[manifest](https://developer.chrome.com/docs/extensions/reference/manifest/content-scripts)
 - [Chrome inspectedWindow](https://developer.chrome.com/docs/extensions/reference/api/devtools/inspectedWindow)
 - [Claude Channels](https://code.claude.com/docs/en/channels)／[reference](https://code.claude.com/docs/en/channels-reference)
 - [Claude Skills](https://code.claude.com/docs/en/skills)／[CLI](https://code.claude.com/docs/en/cli-reference)／[permissions](https://code.claude.com/docs/en/permissions)

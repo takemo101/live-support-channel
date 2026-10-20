@@ -22,7 +22,7 @@ function setup(t, fetcher) {
     if (fixture.error) { done(undefined, fixture.error); return; }
     if (params.action === "read" && fixture.deferRead) { fixture.pendingRead = done; return; }
     if (params.action === "reset") { done({ status: "idle" }); return; }
-    if (params.action === "discover") done({ status: "ready", meetings: [{ id: fixture.snapshot.meetingId, title: "Google Meet（標準字幕・試験版）" }], captionReady: fixture.captionReady, code: fixture.captionReady ? "READY" : "CAPTIONS_OFF", diagnostics: { roots: 1, rows: 1, captionsOn: fixture.captionReady } }, {});
+    if (params.action === "discover") done({ status: "ready", meetings: [{ id: fixture.snapshot.meetingId, title: "Google Meet（標準字幕・試験版）" }], captionReady: fixture.captionReady, code: fixture.discoveryCode ?? (fixture.captionReady ? "READY" : "CAPTIONS_OFF"), diagnostics: fixture.diagnostics ?? { peers: 1, captionChannels: 1, received: 0, accepted: 0, baselineExcluded: 0 } }, {});
     else done(JSON.parse(JSON.stringify(fixture.snapshot)), {});
   } };
   const onNavigated = { addListener(fn) { navigation.add(fn); }, removeListener(fn) { navigation.delete(fn); } };
@@ -52,6 +52,30 @@ test("panel discovers metadata in the normal page world without sending text", a
   assert.ok(s.elements.meeting.children.some(c => c.textContent.includes("標準字幕")));
   assert.deepEqual(s.actions.map(a => a.action), ["discover"]);
   assert.ok(s.contexts.every(c => Object.keys(c).length === 0));
+});
+test("missing early hook explains the required Meet reload", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "RTC_HOOK_NOT_READY";
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /RTC_HOOK_NOT_READY/); assert.match(s.elements.status.textContent, /再読み込み/);
+  assert.equal(posts(s).length, 0);
+});
+for (const code of ["CAPTION_DECODE_BUSY", "CAPTION_ACK_BACKLOG_LIMIT"]) test("RTC resource error has an actionable message: " + code, async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = code;
+  s.elements.refresh.click(); await turn();
+  assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
+  assert.equal(posts(s).length, 0);
+});
+test("RTC diagnostics show whitelisted counters, never arbitrary details", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { peers: 1, received: "PRIVATE_RAW", accepted: 2, payload: "PRIVATE_BYTES" };
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /CAPTION_FORMAT_UNKNOWN/); assert.match(s.elements.status.textContent, /採用=2/);
+  assert.ok(!s.elements.status.textContent.includes("PRIVATE"));
+});
+test("active status distinguishes received packets from excluded initial IDs", async t => {
+  const s = setup(t); await start(s); s.fixture.snapshot.diagnostics = { received: 7, baselineExcluded: 6, accepted: 1 };
+  fresh(s, "fresh", "new caption"); await s.poll();
+  assert.match(s.elements.status.textContent, /受信=7/); assert.match(s.elements.status.textContent, /初回ID除外=6/);
 });
 test("start baselines history; polls send only fresh native captions", async t => {
   const s = setup(t); await start(s);

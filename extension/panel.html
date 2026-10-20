@@ -10,12 +10,12 @@
 <body>
   <main>
     <h1>Live Captions → Claude Code</h1>
-    <p>Google Meetの標準字幕を、約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq本体は不要です。このパネルを離れると停止します。</p>
-    <p class="notice">実会議での互換性は未確認です。Zoom／Teamsの取得処理は未実装です。Meetの標準字幕をONにして、発話後に確認してください。</p>
-    <p class="notice">開始すると、選択した会議の字幕がClaude Codeを通じてAnthropicへ送信されます。開始前の字幕は送りません。Tactiqの一時停止とは連動しません。</p>
+    <p>Meetの字幕通信を、約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。このパネルを離れると停止します。</p>
+    <p class="notice">会議参加前に拡張を準備してください。更新時はMeetタブを再読み込みして参加し、標準字幕をONにします。実会議の互換性は未確認。Zoom／Teamsの取得処理は未実装です。</p>
+    <p class="notice">同意後だけ本文を処理し、必要時は既存Meet接続に自分の字幕チャネルを追加して受信確認を返します。転送字幕はClaude Codeを通じてAnthropicへ送信されます。Tactiqの一時停止とは連動しません。</p>
     <label for="token">ペアリングトークン</label>
     <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値（保存しません）">
-    <button id="refresh" type="button">Meet標準字幕を確認</button>
+    <button id="refresh" type="button">Meet字幕通信の準備を確認</button>
     <label for="meeting">このタブの会議</label>
     <select id="meeting"><option value="">標準字幕をONにして確認してください</option></select>
     <label class="consent"><input id="consent" type="checkbox">標準字幕の独立取得、参加者同意・組織規程・送信先AIのデータ取扱いを確認しました</label>
@@ -25,7 +25,7 @@
       <button id="stop" type="button" disabled>停止・未送信分を破棄</button>
     </div>
     <p id="status" role="status" aria-live="polite">停止中。Meetの標準字幕をONにして確認してください。</p>
-    <p class="note">一時停止中は読み取り・送信しません。開始・再開時の字幕行は修正後も除外し、次の新しい行から送ります。字幕のDOM置換や未知の構造では安全のため停止します。停止操作時に処理中の読取り・送信や、送信済みのデータは取り消せません。</p>
+    <p class="note">開始・再開時は各話者の初回発話ID以前を修正後も除外します。受信時刻基準であり、遅配や履歴を生成時刻で完全に区別する保証はありません。氏名は取得せず「話者1（名前未確認）」等で識別します。一時停止で未処理分は破棄し、新しい本文は処理・保持・送信しません。実行済みの読取り最大1件は取消できず、その終了まで再開を拒否します。停止・lease失効では自分の字幕チャネルだけを閉じ、送信済みデータは取り消せません。</p>
   </main>
 </body>
 </html>

@@ -2,235 +2,136 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import * as reader from "../extension/snapshot.js";
+import { readCaptions } from "../extension/snapshot.js";
 
 const chrome = [process.env.CHROME_BIN, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/chromium", "/usr/bin/google-chrome"].find(p => p && existsSync(p));
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-test("native reader exposes a self-contained page-context entry point", () => {
-  assert.equal(typeof reader.readCaptions, "function");
-});
-
-test("native Meet reader and stream work against real Chrome synthetic DOM", { skip: !chrome }, async t => {
-  assert.equal(typeof reader.readCaptions, "function");
-  const temp = await mkdtemp(join(tmpdir(), "native-captions-"));
-  t.after(() => rm(temp, { recursive: true, force: true }));
+test("RTC reader keeps its page-context entry point", () => assert.equal(typeof readCaptions, "function"));
+test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or model", { skip: !chrome, timeout: 30000 }, async t => {
+  const temp = await mkdtemp(join(tmpdir(), "rtc-captions-"));
+  let browser, socket;
+  t.after(async () => {
+    socket?.close();
+    if (browser && browser.exitCode === null && browser.signalCode === null) {
+      const exited = once(browser, "exit"); browser.kill("SIGTERM");
+      await Promise.race([exited, delay(1000)]);
+      if (browser.exitCode === null && browser.signalCode === null) browser.kill("SIGKILL");
+    }
+    await rm(temp, { recursive: true, force: true });
+  });
+  const hook = await readFile(new URL("../extension/meet-hook.js", import.meta.url), "utf8");
   const streamSource = (await readFile(new URL("../extension/stream.js", import.meta.url), "utf8")).replace("export class CaptionStream", "class CaptionStream");
-  const suite = async function () {
-    const checks = [], sent = [];
-    const eq = (a, b, name) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw Error(name + ": " + JSON.stringify({ actual: a, expected: b })); checks.push(name); };
-    const ok = (a, name) => eq(!!a, true, name);
-    const meetingId = "meet.google.com/abc-defg-hij";
-    let counter = 0, owner, firstRead = true;
-    const command = (action, extra = {}) => {
-      if (action === "read" && firstRead) { action = "start"; firstRead = false; }
-      return capture({ action, meetingId, captureId: owner, ...extra });
-    };
-    function row(speaker, text) {
-      const r = document.createElement("div");
-      const name = document.createElement("div"), body = document.createElement("div");
-      name.textContent = speaker; body.textContent = text; r.append(name, body); return r;
-    }
-    function fixture() {
-      if (owner) command("reset");
-      owner = "synthetic-" + (++counter); firstRead = true;
-      location.hostname = "meet.google.com"; location.pathname = "/abc-defg-hij";
-      document.body.innerHTML = '<button aria-label="Turn off captions (c)"></button><div role="region" tabindex="0" aria-label="Captions"><div><div>Alice</div><div>private baseline</div></div><div></div><div></div></div><div id="tactiq-content-div">PRIVATE_UNRELATED</div><div>PRIVATE_CHAT</div>';
-      return document.querySelector('[role="region"]');
-    }
-    const add = (root, speaker, text) => { const r = row(speaker, text); root.insertBefore(r, root.children[root.children.length - 2]); return r; };
-
-    let root = fixture();
-    Object.defineProperty(window, "tactiq", { configurable: true, get() { throw Error("must never access another extension"); } });
-    for (const node of [root, root.firstElementChild, ...root.firstElementChild.children]) Object.defineProperty(node, "textContent", { configurable: true, get() { throw Error("text read before consent"); } });
-    const discovered = command("discover");
-    eq(discovered.status, "ready", "metadata is ready without reading caption text");
-    eq(discovered.meetings[0].id, meetingId, "metadata identifies current tab only");
-    ok(!JSON.stringify(discovered).includes("PRIVATE_"), "metadata excludes all page text");
-
-    root = fixture();
-    const baseline = command("read");
-    eq(baseline.status, "live", "read recognizes the native caption layout");
-    eq(baseline.blocks[0].transcript, "private baseline", "caption text only");
-    eq(baseline.blocks[0].speakerName, "Alice", "speaker paired to same row");
-    ok(!JSON.stringify(baseline).includes("PRIVATE_CHAT"), "unrelated chat excluded");
-    const stream = new CaptionStream(async payload => { sent.push(payload); });
-    stream.start(baseline);
-    root.firstElementChild.lastElementChild.textContent = "private baseline revised";
-    await stream.update(command("read"));
-    eq(sent.length, 0, "start-baseline revision never replays private prefix");
-    const fresh = add(root, "Bob", "new caption");
-    let snapshot = command("read");
-    const first = snapshot.blocks[1];
-    await stream.update(snapshot);
-    eq(sent.length, 1, "new utterance is forwarded");
-    eq(sent[0].updates.length, 1, "only new utterance sent");
-    eq(command("read").blocks[1], first, "unchanged polls keep id and version stable");
-    fresh.lastElementChild.textContent = "new caption corrected";
-    snapshot = command("read");
-    eq(snapshot.blocks[1].messageId, first.messageId, "revision retains utterance identity");
-    ok(snapshot.blocks[1].messageVersion > first.messageVersion, "revision advances version");
-    await stream.update(snapshot);
-    eq(sent.length, 2, "revision reaches stream");
-    add(root, "Bob", "new caption corrected");
-    const repeated = command("read");
-    ok(repeated.blocks[1].messageId !== repeated.blocks[2].messageId, "identical repeated utterances remain distinct");
-
-    await stream.update({ status: "paused" });
-    const oldOwner = owner;
-    command("reset");
-    add(root, "Carol", "private paused speech");
-    owner = "resumed-" + (++counter); firstRead = true;
-    const resumed = command("read");
-    await stream.update(resumed);
-    root.children[root.children.length - 3].lastElementChild.textContent += " revised";
-    await stream.update(command("read"));
-    eq(sent.length, 2, "resume excludes paused utterance including later revisions");
-    command("reset", { captureId: oldOwner });
-    eq(command("read").blocks[0].messageId, resumed.blocks[0].messageId, "stale cleanup cannot reset a new capture owner");
-    add(root, "Dave", "after resume");
-    await stream.update(command("read"));
-    eq(sent.length, 3, "new post-resume utterance is sent");
-
-    root = fixture(); command("read");
-    root.replaceWith(root.cloneNode(true));
-    eq(command("read").status, "ended", "root replacement fails closed");
-    root = fixture(); command("read");
-    root.firstElementChild.replaceWith(row("Alice", "private baseline revised"));
-    eq(command("read").status, "ended", "unanchored row replacement fails closed");
-    for (const resume of [false, true]) {
-      root = fixture();
-      if (!resume) add(root, "Bob", "private trailing baseline");
-      const leaked = [], guarded = new CaptionStream(async payload => { leaked.push(payload); });
-      guarded.start(command("read"));
-      if (resume) {
-        await guarded.update({ status: "paused" }); command("reset");
-        add(root, "Bob", "private paused tail");
-        owner = "tail-resume-" + (++counter); firstRead = true;
-        await guarded.update(command("read"));
-      }
-      const tail = root.children[root.children.length - 3];
-      tail.replaceWith(tail.cloneNode(true));
-      const replaced = command("read"); await guarded.update(replaced);
-      eq(leaked.length, 0, "trailing baseline replacement cannot leak: " + resume);
-      eq(replaced.code, "CAPTION_SURFACE_CHANGED", "trailing replacement stops: " + resume);
-    }
-    root = fixture(); command("read");
-    const anchor = add(root, "Bob", "anchor"); command("read");
-    root.firstElementChild.remove();
-    add(root, "Carol", "new after retained anchor");
-    eq(command("read").status, "live", "append and old-row removal with retained anchor is allowed");
-    root.insertBefore(row("Alice", "private old history"), anchor);
-    eq(command("read").status, "ended", "inserted history before retained anchor fails closed");
-
-    root = fixture(); root.removeAttribute("aria-label");
-    eq(command("read").code, "CAPTION_IDENTITY_UNKNOWN", "generic regions are not assumed to be captions");
-    root = fixture(); root.removeAttribute("aria-label"); root.id = "native-captions";
-    document.querySelector("button").setAttribute("aria-controls", root.id);
-    eq(command("read").status, "live", "explicit caption-control binding identifies a region");
-
-    root = fixture();
-    document.body.innerHTML = '<button aria-label="字幕をオフにする（c）"></button><div class="a4cQT"><div></div><div><section><div><div>Alice</div><div><span>legacy native caption</span></div></div></section></div></div>';
-    eq(command("read").blocks[0].transcript, "legacy native caption", "historical layout is explicitly scoped");
-    root = fixture();
-    const second = root.cloneNode(true); document.body.append(second);
-    eq(command("read").code, "AMBIGUOUS_CAPTIONS", "multiple regions are not guessed");
-    root = fixture();
-    const iframe = document.createElement("iframe"); document.body.append(iframe);
-    const framed = iframe.contentWindow.eval('(function(){const location={hostname:"meet.google.com",pathname:"/abc-defg-hij"};return (' + capture.toString() + ')({action:"discover"});})()');
-    eq(framed.code, "UNSUPPORTED_FRAME", "child frame is not captured");
-
-    for (const kind of ["row", "body", "descendant", "speaker"]) {
-      root = fixture();
-      const leaked = [], guarded = new CaptionStream(async payload => { leaked.push(payload); });
-      guarded.start(command("read"));
-      const hiddenRow = add(root, "Carol", "non-displayed caption");
-      const surface = kind === "speaker" ? hiddenRow.firstElementChild : hiddenRow.lastElementChild;
-      if (kind === "row") hiddenRow.style.display = "none";
-      if (kind === "body") surface.style.visibility = "hidden";
-      if (kind === "descendant") surface.innerHTML = '<span>visible words</span><span style="display:none">hidden history</span>';
-      if (kind === "speaker") surface.style.opacity = "0";
-      let textReads = 0;
-      const getText = Object.getOwnPropertyDescriptor(Node.prototype, "textContent").get;
-      Object.defineProperty(surface, "textContent", { configurable: true, get() { textReads++; return getText.call(this); } });
-      const rejected = command("read"); await guarded.update(rejected);
-      eq(textReads, 0, "hidden surfaces are rejected before text access: " + kind);
-      eq(leaked.length, 0, "non-displayed text is never forwarded: " + kind);
-      eq(rejected.code, "CAPTION_LAYOUT_UNKNOWN", "hidden/unknown rows stop: " + kind);
-    }
-    root = fixture(); root.style.display = "none";
-    ok(command("discover").captionReady === false, "hidden captions are not offered as ready");
-    root = fixture(); document.querySelector("button").setAttribute("aria-label", "Turn on captions (c)");
-    eq(command("read").code, "CAPTIONS_OFF", "captions off cannot release stale DOM");
-    root = fixture(); document.querySelector("button").setAttribute("aria-label", "unrecognized captions UI");
-    eq(command("read").code, "CAPTION_CONTROL_NOT_FOUND", "unknown controls are not mislabeled as captions-off");
-    root = fixture(); root.firstElementChild.lastElementChild.textContent = "x".repeat(32769);
-    eq(command("read").status, "unsupported", "oversize caption fails closed");
-    root = fixture(); root.firstElementChild.firstElementChild.remove();
-    eq(command("read").status, "unsupported", "unknown row shape fails closed");
-    root = fixture(); document.body.classList.add("tactiq-nocc");
-    eq(command("read").code, "CAPTIONS_HIDDEN", "Tactiq-hidden native captions are not captured");
-    document.body.classList.remove("tactiq-nocc");
-    root = fixture(); location.pathname = "/landing";
-    eq(command("read").status, "ended", "URL change fails closed");
-    root = fixture(); location.hostname = "evil.example";
-    eq(command("discover").code, "UNSUPPORTED_HOST", "unsupported site is not read");
-    location.hostname = "teams.microsoft.com";
-    eq(command("discover").code, "PLATFORM_NOT_IMPLEMENTED", "Teams is explicitly not implemented");
-    location.hostname = "app.zoom.us";
-    eq(command("discover").code, "PLATFORM_NOT_IMPLEMENTED", "Zoom is explicitly not implemented");
-    delete window.tactiq;
-    return { checks, sent };
+  const suite = async function (window, capture, ServerPeer) {
+    let checks = 0, owner = "browser-capture-1", received = 0;
+    const sent = [], remote = [], acknowledgments = [];
+    const eq = (a, b, name) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw Error(name); checks++; };
+    const wait = async (predicate, name) => { const start = performance.now(); while (!predicate()) { if (performance.now() - start > 7000) throw Error(name + " timeout"); await new Promise(r => setTimeout(r, 10)); } };
+    const call = action => capture({ action, meetingId: "meet.google.com/abc-defg-hij", captureId: owner });
+    const stats = () => call("discover").diagnostics;
+    const uint = n => { n = BigInt(n); const out = []; do { const b = Number(n & 127n); n >>= 7n; out.push(b | (n ? 128 : 0)); } while (n); return out; };
+    const field = (n, data) => [n * 8 + 2, ...uint(data.length), ...data];
+    const string = (n, s) => field(n, [...new TextEncoder().encode(s)]);
+    const wire = (id, text, revision = 1) => Uint8Array.from(field(1, [8, ...uint(id), 16, ...uint(revision), ...field(3, [...string(3, text), ...string(4, "en-US"), ...string(6, "private-device-id")])]));
+    const client = new window.RTCPeerConnection({ iceServers: [] }), server = new ServerPeer({ iceServers: [] });
+    const clientCandidates = [], serverCandidates = [];
+    client.onicecandidate = e => { if (e.candidate) { if (server.remoteDescription) void server.addIceCandidate(e.candidate); else clientCandidates.push(e.candidate); } };
+    server.onicecandidate = e => { if (e.candidate) { if (client.remoteDescription) void client.addIceCandidate(e.candidate); else serverCandidates.push(e.candidate); } };
+    server.ondatachannel = event => { remote.push(event.channel); event.channel.addEventListener("message", e => acknowledgments.push([...new Uint8Array(e.data)])); };
+    const transport = client.createDataChannel("collections");
+    try {
+      eq(call("discover").captionReady, false, "not ready before connected transport");
+      await client.setLocalDescription(await client.createOffer()); await server.setRemoteDescription(client.localDescription);
+      await server.setLocalDescription(await server.createAnswer()); await client.setRemoteDescription(server.localDescription);
+      for (const c of clientCandidates) await server.addIceCandidate(c);
+      for (const c of serverCandidates) await client.addIceCandidate(c);
+      await wait(() => client.connectionState === "connected" && transport.readyState === "open", "local RTC connection");
+      eq(call("discover").code, "READY", "prepared hook recognizes real RTC connection without caption DOM");
+      eq(stats().received, 0, "pre-consent payload count is zero");
+      const initial = call("start"); eq(initial.status, "live", "RTC bridge starts");
+      eq(initial.blocks.length, 0, "no replay on start");
+      const stream = new CaptionStream(async payload => { sent.push(payload); }); stream.start(initial);
+      await wait(() => remote.some(c => c.label === "captions_v2" && c.readyState === "open"), "own caption subscription");
+      let channel = remote.findLast(c => c.label === "captions_v2" && c.readyState === "open");
+      const send = async (data) => { received++; channel.send(data); await wait(() => stats().received >= received && stats().queued === 0, "native caption event decoding"); };
+      await send(wire(100, "private baseline")); await stream.update(call("read")); eq(sent.length, 0, "first utterance excluded");
+      await send(wire(100, "private baseline corrected", 2)); await stream.update(call("read")); eq(sent.length, 0, "baseline revision excluded");
+      await send(wire(101, "new caption")); await stream.update(call("read")); eq(sent.length, 1, "new native packet forwarded");
+      await send(wire(101, "new caption corrected", 2)); await stream.update(call("read")); eq(sent.length, 2, "native packet revision forwarded");
+      eq(sent[0].updates[0].messageId, sent[1].updates[0].messageId, "provider revision keeps local identity");
+      eq(sent[1].updates[0].messageVersion, 2, "provider revision number retained");
+      eq(sent[0].updates[0].speakerName, "話者 1（名前未確認）", "speaker names are not guessed");
+      eq(JSON.stringify(sent).includes("private-device-id"), false, "internal device ID is not sent");
+      await wait(() => acknowledgments.length >= 4, "own ACK responses");
+      eq(acknowledgments[0], [10, 8, 10, 6, 8, 100, 16, 1, 24, 1], "v2 ACK wire shape");
+      await stream.update({ status: "paused" }); call("reset");
+      await wait(() => channel.readyState === "closed", "pause closes own channel");
+      eq(transport.readyState, "open", "pause does not close native transport");
+      owner = "browser-capture-2"; received = 0;
+      await stream.update(call("start"));
+      await wait(() => remote.some(c => c.label === "captions_v2" && c.readyState === "open"), "resumed subscription");
+      channel = remote.findLast(c => c.label === "captions_v2" && c.readyState === "open");
+      await send(wire(200, "private paused prefix")); await stream.update(call("read"));
+      await send(wire(200, "private paused prefix revised", 2)); await stream.update(call("read")); eq(sent.length, 2, "resume initial utterance excluded");
+      await send(wire(201, "after resume")); await stream.update(call("read")); eq(sent.length, 3, "new resumed utterance forwarded");
+      eq(JSON.stringify(sent).includes("private"), false, "excluded text never reaches payloads");
+      await send(Uint8Array.of(10, 255));
+      eq(call("read").code, "CAPTION_FORMAT_UNKNOWN", "unknown protocol stops, not DOM fallback");
+      eq(transport.readyState, "open", "decode failure preserves native transport");
+      call("start"); await new Promise(r => setTimeout(r, 2150));
+      eq(call("read").code, "CAPTURE_EXPIRED", "abandoned panel lease expires in real Chrome");
+      eq(transport.readyState, "open", "lease expiry closes only owned resources");
+      return { ok: true, checks, sent, acknowledgments: acknowledgments.length };
+    } finally { call("reset"); client.close(); server.close(); }
   };
-  const html = '<!doctype html><html><body><script>(async()=>{const location={hostname:"meet.google.com",pathname:"/abc-defg-hij"};const capture=' + reader.readCaptions.toString() + ';' + streamSource + ';try{const result=await (' + suite.toString() + ')();document.body.innerHTML="";const p=document.createElement("pre");p.id="test-result";p.textContent=JSON.stringify({ok:true,...result});document.body.append(p);}catch(e){document.body.innerHTML="";const p=document.createElement("pre");p.id="test-result";p.textContent=JSON.stringify({ok:false,error:String(e),stack:e.stack});document.body.append(p);}})();</script></body></html>';
-  const file = join(temp, "fixture.html"); await writeFile(file, html);
-  const output = execFileSync(chrome, ["--headless=new", "--disable-background-networking", "--no-first-run", "--no-default-browser-check", "--user-data-dir=" + join(temp, "profile"), "--dump-dom", "--virtual-time-budget=2000", "file://" + file], { encoding: "utf8", timeout: 30000, maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
-  const match = output.match(/<pre id="test-result">([\s\S]*?)<\/pre>/);
-  assert.ok(match, "Chrome fixture did not return its results");
-  const result = JSON.parse(match[1].replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&"));
-  assert.equal(result.ok, true, result.error + "\n" + result.stack);
-  assert.ok(result.checks.length >= 25);
-  assert.equal(result.sent.length, 3);
-  assert.ok(!JSON.stringify(result.sent).includes("private baseline"));
-  assert.ok(!JSON.stringify(result.sent).includes("private paused"));
+  const html = '<!doctype html><html><body><button aria-label="Turn off captions (c)">Captions</button><script>'
+    + 'const ServerPeer=window.RTCPeerConnection;const values={location:{protocol:"https:",hostname:"meet.google.com",pathname:"/abc-defg-hij"},RTCPeerConnection:ServerPeer};let scope;scope=new Proxy(window,{get(target,key){if(key==="top")return scope;if(Object.hasOwn(values,key))return values[key];const v=target[key];return ["setTimeout","clearTimeout","addEventListener"].includes(key)?v.bind(target):v;},set(target,key,value){values[key]=value;return true;}});'
+    + '(function(window){' + hook + '})(scope);'
+    + 'window.__testPromise=(async function(window,location){const capture=' + readCaptions.toString() + ';' + streamSource
+    + ';try{return await (' + suite.toString() + ')(window,capture,ServerPeer);}catch(e){return {ok:false,error:String(e),stack:e.stack};}})(scope,values.location);</script></body></html>';
+  const file = join(temp, "fixture.html"), profile = join(temp, "profile"); await writeFile(file, html);
+  browser = spawn(chrome, ["--headless=new", "--disable-background-networking", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "--user-data-dir=" + profile, "file://" + file], { stdio: ["ignore", "ignore", "pipe"] });
+  browser.stderr.resume();
+  let port;
+  for (let i = 0; i < 200 && !port; i++) {
+    try { port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]; } catch {}
+    if (!port) { if (browser.exitCode !== null) throw Error("isolated Chrome exited"); await delay(20); }
+  }
+  assert.ok(port, "isolated Chrome did not expose its local test CDP endpoint");
+  const pages = await (await fetch("http://127.0.0.1:" + port + "/json/list")).json();
+  const target = pages.find(p => p.type === "page"); assert.ok(target);
+  socket = new WebSocket(target.webSocketDebuggerUrl); await once(socket, "open");
+  let next = 0; const pending = new Map();
+  socket.addEventListener("message", event => { const message = JSON.parse(event.data); const item = pending.get(message.id); if (item) { pending.delete(message.id); clearTimeout(item.timer); if (message.error) item.reject(Error(message.error.message)); else item.resolve(message.result); } });
+  const evaluate = expression => new Promise((resolve, reject) => { const id = ++next; const timer = setTimeout(() => { pending.delete(id); reject(Error("Chrome test evaluation timeout")); }, 18000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } })); });
+  const evaluated = await evaluate("window.__testPromise");
+  assert.equal(evaluated.exceptionDetails, undefined, evaluated.exceptionDetails?.text);
+  const result = evaluated.result.value; assert.ok(result); assert.equal(result.ok, true, result.error + "\n" + result.stack);
+  assert.ok(result.checks >= 20); assert.equal(result.sent.length, 3);
 
   const runtime = join(temp, "runtime"); await mkdir(runtime, { mode: 0o700 });
   const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../server/main.js", import.meta.url))], env: { TACTIQ_RUNTIME_DIR: runtime, TACTIQ_PORT: "0" }, stderr: "pipe" });
-  const client = new Client({ name: "native-caption-fixture", version: "1" }, { capabilities: {} });
+  const client = new Client({ name: "rtc-caption-fixture", version: "1" }, { capabilities: {} });
   let logs = "", readyTimer, eventTimer, finish;
   const endpoint = new Promise((resolve, reject) => {
     readyTimer = setTimeout(() => reject(Error("receiver readiness timeout")), 5000);
-    transport.stderr.on("data", chunk => {
-      logs += chunk;
-      const match = logs.match(/http:\/\/127\.0\.0\.1:\d+/);
-      if (match) { clearTimeout(readyTimer); resolve(match[0]); }
-    });
+    transport.stderr.on("data", chunk => { logs += chunk; const match = logs.match(/http:\/\/127\.0\.0\.1:\d+/); if (match) { clearTimeout(readyTimer); resolve(match[0]); } });
   });
   const events = [], received = new Promise(resolve => { finish = resolve; });
-  client.fallbackNotificationHandler = async event => {
-    if (event.method === "notifications/claude/channel") {
-      events.push(JSON.parse(event.params.content));
-      if (events.length === result.sent.length) finish();
-    }
-  };
+  client.fallbackNotificationHandler = async event => { if (event.method === "notifications/claude/channel") { events.push(JSON.parse(event.params.content)); if (events.length === result.sent.length) finish(); } };
   try {
-    await client.connect(transport);
-    const url = await endpoint, token = (await readFile(join(runtime, "token"), "utf8")).trim();
-    for (const payload of result.sent) {
-      const response = await fetch(url + "/captions", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) });
-      assert.equal(response.status, 202);
-    }
-    await Promise.race([received, new Promise((_, reject) => { eventTimer = setTimeout(() => reject(Error("native fixture channel events missing")), 5000); })]);
-    assert.equal(events.length, 3);
-    assert.equal(events[0].updates[0].messageId, events[1].updates[0].messageId);
-    assert.ok(events[1].updates[0].messageVersion > events[0].updates[0].messageVersion);
-    assert.equal(events[2].updates[0].transcript, "after resume");
-    assert.ok(!logs.includes(token));
-    t.diagnostic(`Chrome synthetic DOM: ${result.checks.length} assertions; ${events.length} real HTTP/MCP events; no live meeting or model.`);
+    await client.connect(transport); const url = await endpoint, token = (await readFile(join(runtime, "token"), "utf8")).trim();
+    for (const payload of result.sent) assert.equal((await fetch(url + "/captions", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) })).status, 202);
+    await Promise.race([received, new Promise((_, reject) => { eventTimer = setTimeout(() => reject(Error("RTC channel events missing")), 5000); })]);
+    assert.equal(events.length, 3); assert.equal(events[0].updates[0].messageId, events[1].updates[0].messageId);
+    assert.equal(events[2].updates[0].transcript, "after resume"); assert.ok(!logs.includes(token));
+    t.diagnostic(`Chrome loopback RTC: ${result.checks} assertions, ${result.acknowledgments} own ACKs, ${events.length} real HTTP/MCP events; no live meeting/model.`);
   } finally { clearTimeout(readyTimer); clearTimeout(eventTimer); await client.close(); }
 });

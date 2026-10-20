@@ -3,18 +3,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-test("extension is a local-only DevTools panel without broad capture permissions", async () => {
+test("extension prepares a MAIN-world hook on Meet only with no broad permissions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.devtools_page, "devtools.html");
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
   assert.equal(manifest.permissions, undefined);
-  assert.equal(manifest.content_scripts, undefined);
+  assert.deepEqual(manifest.content_scripts, [{ matches: ["https://meet.google.com/*"], js: ["meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false }]);
   assert.match(manifest.content_security_policy.extension_pages, /connect-src http:\/\/127\.0\.0\.1:43821;/);
   const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");
   for (const id of ["token", "meeting", "consent", "refresh", "start", "pause", "stop", "status"]) assert.ok(html.includes('id="' + id + '"'));
   assert.match(html, /role="status"/);
-  assert.match(html, /標準字幕/);
+  assert.match(html, /字幕通信/);
+  assert.match(html, /会議参加前/);
   assert.match(html, /Tactiqの一時停止とは連動しません/);
   assert.match(html, /Zoom.*Teams.*未実装/);
   assert.ok(!/<script[^>]*>[^<\s]/.test(html));

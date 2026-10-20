@@ -8,7 +8,7 @@
 
 `background.js` と `googlemeet.inline.js` は解析できたが、約2 MBの `content.js` はワーカーヒープ上限で解析できなかった。イベント、Redux相当の状態、一時停止、外部メッセージ制限の具体的な意味は、配布コードの直接確認と公式資料の調査で補った。
 
-初期試作（v0.3.1まで）はTactiqの処理済み状態を読む設計だったが、後に**Chromeの別拡張contextアクセス制限で失敗する**ことが判明した。v0.4.0ではその経路を削除し、独立した**Meet標準字幕DOM reader**へ変更した。Tactiqは不要、Zoom／Teamsの取得は未実装。現在の取得仕様は [SPEC.md](../SPEC.md)、公開DOM候補と制限は [native-captions.md](native-captions.md) を参照。実会議・実モデルの全経路は未検証である。
+初期試作（v0.3.1まで）はTactiqの処理済み状態を読む設計だったが、後に**Chromeの別拡張contextアクセス制限で失敗する**ことが判明した。v0.4.0では独立したDOM readerへ変更したが、実Meetで行0の報告があった。v0.5.0ではさらに、**Meet字幕DataChannelの独立reader**へ切り替えた。Tactiqは不要、Zoom／Teamsの取得は未実装。現在の取得仕様は [SPEC.md](../SPEC.md)、公開DOM候補と制限は [native-captions.md](native-captions.md) を参照。実会議・実モデルの全経路は未検証である。
 
 ## 1. 調べたかったこと
 
@@ -168,9 +168,15 @@ minify済みファイルの文字列検索だけでは、SDK内部コードと�
 - 非公開APIの認証情報抽出や拡張の改造は行わない。
 - 会議本文を操作指示・ツール権限の承認と扱わない。
 
-**現在のv0.4.0では**「Meet標準字幕DOM → 通常page eval → 約1秒取得／約5秒差分送信 → 既存HTTP／Channels」を実装した。専用のpause／resume／stopが必要で、Tactiqのpauseとは連動しない。実Chrome合成DOMでは検証したが、実Meetの互換性は未確認である。
+**v0.4.0では**「Meet標準字幕DOM → 通常page eval → 約1秒取得／約5秒差分送信 → 既存HTTP／Channels」を実装した。専用のpause／resume／stopが必要で、Tactiqのpauseとは連動しない。実Chrome合成DOMでは検証したが、実Meetの互換性は未確認である。
 
-現在のコードは [`extension/snapshot.js`](../extension/snapshot.js)、[`extension/stream.js`](../extension/stream.js)、[`extension/panel.js`](../extension/panel.js)、[`server/bridge.js`](../server/bridge.js)、[`server/main.js`](../server/main.js)。詳細な運用とデータ形式は [`SPEC.md`](../SPEC.md) を参照。
+**v0.5.0では**「MAIN/document_start準備 → 同意後のcaptions／captions_v2 decode → 既存HTTP／Channels」へ変更した。本人がMeet限定サイトアクセスと、必要時の自分の字幕チャネル追加／own-v2 ACKを個別承認した。元の通信や字幕設定は書き換えず、氏名は匿名ラベルにする。各話者の初回ID以前を除外するが、生成時刻での完全な区間分離は保証しない。
+
+今回、配布コードをさらに直接確認し、meet_messagesのji処理はチャット系であり、字幕本体はju／Ku等のcaptions profileで扱われることを区別した。イベント名speechだけから字幕と判断しない。これはREAの自動結論ではなく静的なコード確認による精密化である。
+
+実Chromeのローカル2 PeerConnectionで合成字幕・ACK・停止・leaseと実HTTP/MCP通知を検証したが、現行Meet、document_start拡張ロード、実モデルでは未確認のままである。Chromeの安全機能無効化や、Tactiqコードの流用はしていない。
+
+現在のコードは [`extension/meet-hook.js`](../extension/meet-hook.js)、[`extension/snapshot.js`](../extension/snapshot.js)、[`extension/stream.js`](../extension/stream.js)、[`extension/panel.js`](../extension/panel.js)、[`server/bridge.js`](../server/bridge.js)、[`server/main.js`](../server/main.js)。詳細な運用とデータ形式は [`SPEC.md`](../SPEC.md) を参照。
 
 ## 7. 検証済み／未検証
 
@@ -184,7 +190,7 @@ minify済みファイルの文字列検索だけでは、SDK内部コードと�
 
 ### 未検証
 
-- 現在のMeet標準字幕DOM、実DevTools接続から実会議までの互換性。
+- 現在のMeetの字幕wire、document_start拡張ロード、実DevTools接続から実会議までの互換性。
 - Zoom／Teamsの独立readerは未実装。旧Tactiq private context経路はアクセス拒否のため削除済み。
 - Claude Code本体が開発channelを許可し、実モデルへ取り込むこと。
 - 長時間運用、AIによる要約やプロジェクト判断の精度・遅延・費用。

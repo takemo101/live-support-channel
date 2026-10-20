@@ -11,13 +11,22 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   const messages = {
     CAPTIONS_OFF: "Meetの標準字幕をONにして、発話後に再確認してください。",
     CAPTION_CONTROL_NOT_FOUND: "字幕ボタンの状態を確認できません。日本語／英語UI以外、または未対応のUI構造です。",
-    CAPTIONS_HIDDEN: "標準字幕がTactiqによって非表示です。標準字幕を表示してから再確認してください。",
-    CAPTIONS_NOT_FOUND: "標準字幕の領域が見つかりません。字幕をONにして再確認してください。",
-    CAPTION_ROWS_NOT_FOUND: "対応する字幕行がありません。発話後に再確認してください。",
-    CAPTION_IDENTITY_UNKNOWN: "字幕領域と確認できない構造のため取得しません。未対応レイアウトです。",
-    AMBIGUOUS_CAPTIONS: "字幕領域を一意に特定できないため取得しません。",
-    CAPTION_LAYOUT_UNKNOWN: "未対応の字幕構造です。取得を停止します。",
-    CAPTION_SURFACE_CHANGED: "字幕DOMの置換を検出したため停止しました。過去字幕の再送を防ぐため再確認が必要です。",
+    RTC_HOOK_NOT_READY: "参加前フックがありません。Meetへのサイトアクセスを確認し、拡張更新後にMeetタブを再読み込みして会議へ入り直してください。",
+    RTC_CONNECTION_NOT_FOUND: "対応するMeet接続が見つかりません。参加前に拡張を読み込み、会議参加後に字幕をONにして再確認してください。",
+    RTC_CONNECTION_AMBIGUOUS: "会議接続を一意に特定できないため取得しません。",
+    RTC_PREPARE_FAILED: "通信フックを準備できません。他の字幕拡張との競合や管理ポリシーを確認してください。",
+    RTC_UNAVAILABLE: "このページでWebRTC接続を利用できません。",
+    RTC_RESOURCE_LIMIT: "接続の監視上限に達したため停止しました。非機密のテスト会議でページを再読み込みしてください。",
+    RTC_CONNECTION_CLOSED: "会議接続が終了したため停止しました。再確認が必要です。",
+    CAPTURE_EXPIRED: "読取りleaseが期限切れのため停止しました。パネルを表示したまま再確認して開始してください。",
+    CAPTION_CHANNEL_CLOSED: "字幕チャネルが終了したため停止しました。自動では再購読しません。",
+    CAPTION_SUBSCRIPTION_FAILED: "字幕チャネルを追加できません。標準字幕・組織設定・他の字幕拡張との競合を確認してください。",
+    CAPTION_FORMAT_UNKNOWN: "未対応の字幕通信形式です。本文を送らず停止しました。診断コードと件数だけを報告してください。",
+    CAPTION_BACKLOG_LIMIT: "字幕の処理待ち上限に達したため停止しました。",
+    CAPTION_DECODE_BUSY: "前の読取り処理の終了待ちです。少し待って再確認してください。終了しない場合は非機密のテスト会議でページを再読み込みしてください。",
+    CAPTION_ACK_BACKLOG_LIMIT: "字幕の受信確認の送信待ち上限に達したため停止しました。通信状態を確認して再確認してください。",
+    CAPTION_SEQUENCE_UNKNOWN: "発話IDの順序を確認できないため停止しました。",
+    CAPTION_REVISION_CONFLICT: "同じ修正番号で本文が異なるため停止しました。",
     CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
     CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
     PLATFORM_NOT_IMPLEMENTED: "現在はMeet標準字幕の試験版です。Zoom／Teamsの取得処理は未実装です。",
@@ -31,19 +40,21 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     EVALUATION_FAILED: "ページでの読取りに失敗しました。会議タブを再確認してください。",
     READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
   };
+  function statistics(d) {
+    return [["peers", "接続"], ["captionChannels", "字幕ch"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
+      .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
+      .map(([key, label]) => `${label}=${d[key]}`).join("／");
+  }
   function describe(result) {
     const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";
-    const d = result?.diagnostics;
-    const counts = d && Number.isInteger(d.roots) && d.roots >= 0 && d.roots <= 4000 && Number.isInteger(d.rows) && d.rows >= 0 && d.rows <= 4000
-      ? ` 領域=${d.roots}／字幕行=${d.rows}` : "";
-    return messages[code] + `（${code}）` + counts;
+    return messages[code] + `（${code}）` + statistics(result?.diagnostics);
   }
   function controls() {
     for (const id of ["token", "meeting", "refresh", "consent"]) el(id).disabled = active;
     el("start").disabled = active || !captionReady || !el("meeting").value || !el("consent").checked;
     el("stop").disabled = !active;
     el("pause").disabled = !active || busy || !stream.run;
-    el("pause").textContent = paused ? "再開（現在の字幕を除外）" : "一時停止";
+    el("pause").textContent = paused ? "再開（各話者の初回IDを除外）" : "一時停止";
   }
   function evaluate(action, owner = captureId) {
     const params = { action, meetingId, captureId: owner };
@@ -92,7 +103,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
         const option = document.createElement("option"); option.value = meeting.id; option.textContent = meeting.title; el("meeting").append(option);
       }
       captionReady = result.captionReady === true && result.code === "READY";
-      status(captionReady ? "Meet標準字幕の候補を検出しました。会議を選び、同意を確認して開始してください。実会議での互換性は未確認です。" : describe(result));
+      status(captionReady ? "Meet通信フックの接続候補を検出しました。会議を選び、同意を確認して開始してください。実会議での互換性は未確認です。" : describe(result));
     } catch (error) { if (run === generation) status(describe(error)); }
     finally { if (run === generation) controls(); }
   }
@@ -106,7 +117,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     let characters = 0;
     for (const block of captured.values()) characters += block.transcript.length;
     if (captured.size > 4000 || characters > 2_000_000) throw Object.assign(Error("CAPTURE_BUFFER_LIMIT"), { code: "CAPTURE_BUFFER_LIMIT" });
-    lastSnapshot = { status: "live", meetingId: snapshot.meetingId, platform: snapshot.platform };
+    lastSnapshot = { status: "live", meetingId: snapshot.meetingId, platform: snapshot.platform, statistics: statistics(snapshot.diagnostics) };
     return { ...lastSnapshot, blocks: [...captured.values()] };
   }
   function capture() {
@@ -135,7 +146,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     try {
       await stream.update({ ...lastSnapshot, blocks: [...captured.values()] });
       if (!active || paused || run !== generation) return;
-      status("標準字幕を取得約1秒／送信約5秒で転送中。送信済みバッチ " + stream.run.sequence);
+      status("字幕通信を転送中（約5秒単位）。" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence);
     } catch (error) {
       if (active && run === generation) {
         if (error.fatal) stop(error.message + "。停止しました。");
@@ -164,7 +175,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       if (resume) await stream.update(baseline); else stream.start(baseline);
       if (!active || run !== generation) return;
       paused = false; readTimer = setInterval(capture, 1000); sendTimer = setInterval(flush, 5000);
-      status("転送開始。現在の字幕は除外し、次の新しい字幕行から送ります。Tactiqの一時停止とは連動しません。");
+      status("取得開始。各話者の初回発話IDと過去IDを除外し、次IDから転送します。Tactiqの一時停止とは連動しません。");
     } catch (error) {
       if (run === generation) stop(error.code ? describe(error) : error.fatal ? error.message + "。停止しました。" : "接続できないため停止しました。Claude側のサーバーを確認してください。");
     } finally { if (run === generation) { busy = false; controls(); } }
@@ -176,7 +187,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     clearInterval(readTimer); clearInterval(sendTimer); readTimer = sendTimer = undefined; controller?.abort();
     capturePromise = lastSnapshot = undefined; captured.clear();
     void stream.update({ status: "paused" }); resetReader(); controls();
-    status("一時停止中。字幕の読取り・送信を行いません。再開時の字幕も除外します。");
+    status("一時停止中。本文を処理・保持・送信しません。再開時は各話者の初回IDを除外します。");
   }
   const navigate = () => { captionReady = false; stop("ページが移動したため停止しました。字幕を再確認してください。"); el("meeting").replaceChildren(); controls(); };
   el("refresh").addEventListener("click", refresh);
