@@ -120,7 +120,7 @@ async function main() {
       "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
       "--append-system-prompt-file", skillPath,
       "--dangerously-load-development-channels", "server:tactiq-live", "--",
-      "会議サポートモードを開始してください。まずこのプロジェクトの必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、今の話・相手の問い・口にできる返答案・必要な指摘や提案を日本語で短く更新してください。",
+      "会議サポートモードを開始してください。まず本人の会議での表示名を確認し、このプロジェクトのCLAUDE.mdと必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、skillの書式（要点・相手の問い・返答案・提案）で、本人の発言を除き、字幕の不完全さに注意しながら日本語で短く更新してください。",
     ], { stdio: "inherit", env: process.env });
     try {
       const [code] = await once(child, "exit");
