@@ -17,14 +17,16 @@
   const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.clear(); s.speakers.clear(); s.entries.clear(); } });
   const { finish, valid } = life;
   // Teams' main channel also carries unrelated control traffic: anything that is not a recognition result is ignored, never an error.
-  function results(data) {
+  // Counters only (never content) show where frames are dropped. Decoding is lenient like Tactiq's: binary framing before the JSON must not hide captions.
+  function results(data, stats) {
     let bytes;
-    if (data instanceof Buffer) bytes = new page.Uint8Array(data); else if (ArrayBuffer.isView(data)) bytes = new page.Uint8Array(data.buffer, data.byteOffset, data.byteLength); else return null;
-    if (!bytes.length || bytes.length > LIMIT) return null;
-    let message; try { message = new Decoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
-    const start = message.indexOf("{"); if (start < 0 || start > 32) return null;
-    let body; try { body = JSON.parse(message.slice(start)); } catch { return null; }
-    return body && Array.isArray(body.recognitionResults) ? body.recognitionResults.slice(0, 65) : null;
+    if (data instanceof Buffer) bytes = new page.Uint8Array(data); else if (ArrayBuffer.isView(data)) bytes = new page.Uint8Array(data.buffer, data.byteOffset, data.byteLength); else { stats.nonBinary++; return null; }
+    if (!bytes.length || bytes.length > LIMIT) { stats.noJson++; return null; }
+    const message = new Decoder("utf-8").decode(bytes);
+    const start = message.indexOf("{"); if (start < 0 || start > 256) { stats.noJson++; return null; }
+    let body; try { body = JSON.parse(message.slice(start)); } catch { stats.noJson++; return null; }
+    if (body && Array.isArray(body.recognitionResults)) return body.recognitionResults.slice(0, 65);
+    stats.nonCaption++; return null;
   }
   function ingest(s, raw) {
     if (!raw || typeof raw !== "object" || !("timestampAudioSent" in raw)) return;
@@ -71,7 +73,7 @@
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
     s.stats.frames++;
     try {
-      const items = results(event.data); if (!items) return;
+      const items = results(event.data, s.stats); if (!items) return;
       for (const raw of items) { ingest(s, raw); if (life.current !== s) return; }
     } catch (error) {
       if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
@@ -125,7 +127,7 @@
       const target = candidates()[0]; life.clearTerminal();
       life.activate({ owner: captureId, meetingId, connection: target, entries: new Set([...target.channels].filter(live)),
         records: new Map(), speakers: new Map(), characters: 0, started: now(),
-        stats: { frames: 0, received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } });
+        stats: { frames: 0, nonBinary: 0, noJson: 0, nonCaption: 0, received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } });
     }
     return life.epilogue(params, { platform: "Teams", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []) });
   }

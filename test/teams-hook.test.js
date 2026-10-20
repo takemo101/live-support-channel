@@ -85,7 +85,7 @@ test("only filtered text is used and unrelated control traffic is ignored withou
   f.channel.message(encode("x".repeat(300000)));
   f.channel.message(encode(results({ id: "x/1", userId: "u", text: "no audio timestamp" })));
   f.channel.message(encode(results(item(5, "u", 1, "filtered", { rawText: "unfiltered words" })), "\u0000\u0002"));
-  f.channel.message(encode(results(item(6, "u", 1, "far prefix")), "x".repeat(40)));
+  f.channel.message(encode(results(item(6, "u", 1, "far prefix")), "x".repeat(300)));
   const read = f.command("read"); assert.equal(read.status, "live");
   assert.deepEqual(plain(read.blocks.map(b => b.transcript)), ["filtered"]);
   f.command("reset");
@@ -168,5 +168,16 @@ test("diagnostics list observed channel labels (sanitized, bounded) and count fr
   f.command("start"); f.channel.message(encode("unrelated")); f.channel.message(encode({ other: 1 })); f.say(item(1, "u", 1, "boundary"));
   const diagnostics = f.command("read").diagnostics;
   assert.equal(diagnostics.frames, 3); assert.equal(diagnostics.received, 1);
+  f.command("reset");
+});
+test("captions behind binary framing are read and dropped frames are counted by reason", t => {
+  const f = fixture(t);
+  f.command("start");
+  const framed = body => { const json = new TextEncoder().encode(JSON.stringify(body)), out = new Uint8Array(6 + json.length); out.set([0xff, 0xfe, 0x80, 0x00, 0xc3, 0x28]); out.set(json, 6); return out.buffer; };
+  f.channel.message(framed(results(item(1, "u", 1, "boundary"))));
+  f.channel.message(framed(results(item(2, "u", 1, "kept"))));
+  f.channel.message("string frame"); f.channel.message(encode("no brace")); f.channel.message(encode({ other: 1 }));
+  const d = f.command("read").diagnostics;
+  assert.deepEqual({ frames: d.frames, nonBinary: d.nonBinary, noJson: d.noJson, nonCaption: d.nonCaption, received: d.received, accepted: d.accepted }, { frames: 5, nonBinary: 1, noJson: 1, nonCaption: 1, received: 2, accepted: 1 });
   f.command("reset");
 });
