@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-const source = await readFile(new URL("../extension/zoom-hook.js", import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const readSource = async name => readFile(new URL("../extension/" + name, import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const source = await readSource("hook-core.js") + "\n" + await readSource("zoom-hook.js");
 const key = "__liveCaptionsRtc_v1", meetingId = "app.zoom.us/wc/12345678";
 
 function fixture({ host = "app.zoom.us", pathname = "/wc/12345678/join", framed = false, protocol = "https:", frame = true } = {}) {

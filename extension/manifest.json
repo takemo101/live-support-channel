@@ -10,9 +10,9 @@
     "http://127.0.0.1/*"
   ],
   "content_scripts": [
-    { "matches": ["https://meet.google.com/*"], "js": ["meet-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
-    { "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], "js": ["teams-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
-    { "matches": ["https://app.zoom.us/*"], "js": ["zoom-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false }
+    { "matches": ["https://meet.google.com/*"], "js": ["hook-core.js", "meet-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
+    { "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], "js": ["hook-core.js", "teams-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
+    { "matches": ["https://app.zoom.us/*"], "js": ["hook-core.js", "zoom-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false }
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:43821; base-uri 'none';"

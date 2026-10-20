@@ -1,15 +1,15 @@
 // MAIN/document_start. No transcript processing while idle; no token or HTTP access here.
 (() => {
-  const page = window, key = "__liveCaptionsRtc_v1";
-  if (page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "meet.google.com" || page[key]) return;
+  const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
+  try { delete page.__liveCaptionsHookCore; } catch {}
+  if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "meet.google.com" || page[key]) return;
   const NativePeer = page.RTCPeerConnection, create = NativePeer?.prototype?.createDataChannel;
   const { Uint8Array: Bytes, ArrayBuffer: Buffer, TextDecoder: Decoder, Blob: BinaryBlob, DecompressionStream: Inflate } = page;
   const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
-  const timeout = page.setTimeout.bind(page), cancel = page.clearTimeout.bind(page);
-  const LIMIT = 262144, ACK_LIMIT = 16384, LEASE = 2000, peers = new Set(), tracked = new WeakMap();
+  const LIMIT = 262144, ACK_LIMIT = 16384, peers = new Set(), tracked = new WeakMap();
   const NativeChannel = page.RTCDataChannel?.prototype, nativeSend = NativeChannel?.send, mediaSeen = new WeakMap(), mediaWritten = new WeakSet();
   const captionLabels = new Set(["captions", "captions_v2"]);
-  let current = null, terminal = null, prepareError = null, generation = 0, decoding = null;
+  let prepareError = null, decoding = null;
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
   const currentMeeting = () => page.location.hostname === "meet.google.com" && page.location.protocol === "https:" && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(page.location.pathname)
@@ -20,33 +20,21 @@
     return buttons.some(b => /^(Turn on captions|字幕をオンにする)(?:\s|[（(]|$)/i.test(b.getAttribute("aria-label"))) ? "CAPTIONS_OFF" : "CAPTION_CONTROL_NOT_FOUND";
   }
   function closeOwned(entry) { if (entry.owned) { try { entry.channel.close(); } catch {} } }
-  function finish(code) {
-    const s = current; if (!s) return generation;
-    const retired = ++generation;
-    current = null; cancel(s.timer);
-    terminal = { owner: s.owner, generation: s.generation, meetingId: s.meetingId, code, assisted: s.assisted === true,
-      stats: { ...s.stats, queued: 0, inFlight: decoding === s ? 1 : 0 } };
-    for (const job of s.queue) job.data = null;
-    s.queue.length = 0; s.stats.queued = 0;
-    const reader = s.reader; s.reader = null;
-    if (reader) { try { void reader.cancel().catch(() => {}); } catch {} }
-    s.records.clear(); s.speakers.clear();
-    for (const entry of s.entries) closeOwned(entry);
-    s.entries.clear();
-    return retired;
-  }
-  function valid(s) {
-    if (current !== s) return false;
-    if (now() >= s.deadline) { finish("CAPTURE_EXPIRED"); return false; }
-    if (currentMeeting() !== s.meetingId) { finish("MEETING_CHANGED"); return false; }
-    const code = captionControl(); if (current !== s) return false;
-    if (code !== "READY" && !(s.assisted && code === "CAPTIONS_OFF")) { finish(code); return false; }
-    return true;
-  }
-  function renew(s) {
-    cancel(s.timer); s.deadline = now() + LEASE;
-    s.timer = timeout(() => { if (current === s) finish("CAPTURE_EXPIRED"); }, LEASE);
-  }
+  const life = core(page, {
+    meeting: currentMeeting,
+    inFlight: s => decoding === s ? 1 : 0,
+    check(s) { const code = captionControl(); return code === "READY" || (s.assisted && code === "CAPTIONS_OFF") ? null : code; },
+    cleanup(s) {
+      for (const job of s.queue) job.data = null;
+      s.queue.length = 0; s.stats.queued = 0;
+      const reader = s.reader; s.reader = null;
+      if (reader) { try { void reader.cancel().catch(() => {}); } catch {} }
+      s.records.clear(); s.speakers.clear();
+      for (const entry of s.entries) closeOwned(entry);
+      s.entries.clear();
+    },
+  });
+  const { finish, valid } = life;
   function varint(bytes, cursor) {
     let value = 0n;
     for (let i = 0; i < 10; i++) {
@@ -199,12 +187,12 @@
     s.stats.accepted++;
   }
   function receive(entry, event) {
-    const s = current;
+    const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
     if (s.stats.queued >= 8) { finish("CAPTION_BACKLOG_LIMIT"); return; }
     let data;
     try { data = event.data; payloadSize(data); }
-    catch (error) { if (current === s) finish(error?.code === "CAPTION_LIMIT" ? error.code : "CAPTION_FORMAT_UNKNOWN"); return; }
+    catch (error) { if (life.current === s) finish(error?.code === "CAPTION_LIMIT" ? error.code : "CAPTION_FORMAT_UNKNOWN"); return; }
     if (!valid(s)) return;
     s.stats.received++; s.stats.queued++;
     s.queue.push({ entry, data }); void drain(s);
@@ -224,10 +212,10 @@
         } finally { s.stats.queued = Math.max(0, s.stats.queued - 1); s.stats.inFlight = 0; }
       }
     } catch (error) {
-      if (current === s) finish(["CAPTION_LIMIT", "CAPTION_BACKLOG_LIMIT", "CAPTION_ACK_BACKLOG_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
+      if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_BACKLOG_LIMIT", "CAPTION_ACK_BACKLOG_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
     } finally {
       if (decoding === s) decoding = null;
-      if (terminal?.generation === s.generation) terminal.stats.inFlight = 0;
+      if (life.terminal?.generation === s.generation) life.terminal.stats.inFlight = 0;
     }
   }
   function track(peer) {
@@ -237,7 +225,7 @@
     peer.addEventListener("datachannel", event => { if (event.isTrusted === true) attach(record, event.channel); });
     peer.addEventListener("connectionstatechange", () => {
       if (["closed", "failed"].includes(peer.connectionState)) {
-        peers.delete(record); if (current?.connection === record) finish("RTC_CONNECTION_CLOSED");
+        peers.delete(record); if (life.current?.connection === record) finish("RTC_CONNECTION_CLOSED");
       }
     });
     return record;
@@ -252,7 +240,7 @@
       if (captionLabels.has(label)) channel.addEventListener("message", event => receive(entry, event));
       channel.addEventListener("close", () => {
         connection.channels.delete(entry);
-        if (current?.entries.has(entry)) finish("CAPTION_CHANNEL_CLOSED");
+        if (life.current?.entries.has(entry)) finish("CAPTION_CHANNEL_CLOSED");
       });
     } catch (error) { connection.channels.delete(entry); throw error; }
     return entry;
@@ -309,49 +297,38 @@
       ...[1, 2].map(n => lengthDelimited(1, lengthDelimited(1, [...numberField(2, seen.ack + n), ...numberField(3, 1)])))];
     try { for (const frame of frames) nativeSend.call(channel, Bytes.from(frame)); }
     catch { finish("CAPTION_ENABLE_FAILED"); return "CAPTION_ENABLE_FAILED"; }
-    return current === s ? null : "CAPTURE_CHANGED";
+    return life.current === s ? null : "CAPTURE_CHANGED";
   }
   function metadata(assist = false) {
     const id = currentMeeting(), choices = candidates(), selected = choices.length === 1 ? choices[0] : null;
     let code = prepareError ?? (id ? captionControl() : "NOT_MEETING_PAGE");
     if (assist && code === "CAPTIONS_OFF") code = selected ? (assistTarget(selected).code ?? "READY") : "READY";
     if (code === "READY" && !selected) code = choices.length > 1 ? "RTC_CONNECTION_AMBIGUOUS" : "RTC_CONNECTION_NOT_FOUND";
-    if (code === "READY" && decoding && !current) code = "CAPTION_DECODE_BUSY";
-    const stats = current?.stats ?? terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
+    if (code === "READY" && decoding && !life.current) code = "CAPTION_DECODE_BUSY";
+    const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
     return { status: "ready", source: "meet-rtc-experimental", platform: "Google Meet",
       meetings: id ? [{ id, title: "Google Meet（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, profile: current?.selected?.label ?? "pending" } };
+      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, profile: life.current?.selected?.label ?? "pending" } };
   }
-  function command({ action = "discover", meetingId, captureId, previousCaptureId, assistCaptions } = {}) {
-    if (action === "reset") {
-      if (current?.owner === captureId) {
-        const retired = finish("CAPTURE_RESET"); if (generation === retired) terminal = null;
-      }
-      else if (terminal?.owner === captureId) terminal = null;
-      return { status: "idle" };
-    }
-    if (action === "discover") return metadata(assistCaptions === true);
-    if (!currentMeeting() || currentMeeting() !== meetingId) return { status: "ended", code: "MEETING_CHANGED" };
-    if (typeof captureId !== "string" || !captureId.length || captureId.length > 128) return { status: "unavailable", code: "INVALID_CAPTURE" };
-    // Recovery only continues the same meeting after its own lease lapsed; any other end state needs a user action.
-    if (action === "recover" && (current || terminal?.code !== "CAPTURE_EXPIRED" || terminal.meetingId !== meetingId
-      || typeof previousCaptureId !== "string" || terminal.owner !== previousCaptureId || previousCaptureId === captureId)) return { status: "ended", code: "CAPTURE_CHANGED" };
+  function command(params = {}) {
+    const { action, meetingId, captureId, assistCaptions } = params;
+    const early = life.prologue(params, () => metadata(assistCaptions === true)); if (early) return early;
     if (action === "start" || action === "recover") {
-      const assisted = action === "recover" ? terminal.assisted === true : assistCaptions === true;
+      const assisted = action === "recover" ? life.terminal.assisted === true : assistCaptions === true;
       const meta = metadata(assisted); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
       const retired = finish("CAPTURE_REPLACED");
-      if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
+      if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
       if (decoding) return { status: "unavailable", code: "CAPTION_DECODE_BUSY" };
       const ready = metadata(assisted), choices = candidates();
-      if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
+      if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
       if (currentMeeting() !== meetingId) return { status: "ended", code: "MEETING_CHANGED" };
       if (!ready.captionReady) return { status: "unavailable", code: ready.code };
       if (choices.length !== 1) return { status: "unavailable", code: choices.length > 1 ? "RTC_CONNECTION_AMBIGUOUS" : "RTC_CONNECTION_NOT_FOUND" };
-      const target = choices[0]; terminal = null;
+      const target = choices[0]; life.clearTerminal();
       const s = { owner: captureId, meetingId, connection: target, assisted, entries: new Set(), selected: null,
         records: new Map(), speakers: new Map(), characters: 0, started: now(), queue: [], reader: null,
         stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } };
-      current = s; s.generation = ++generation; renew(s);
+      life.activate(s);
       try {
         for (const entry of target.channels) if (!entry.owned && captionLabels.has(entry.label) && entry.channel.ordered && ["open", "connecting"].includes(entry.channel.readyState)) s.entries.add(entry);
         if (!s.entries.size) for (const label of ["captions_v2", "captions"]) {
@@ -365,17 +342,12 @@
           s.entries.add(entry);
         }
       } catch {
-        if (current !== s) return { status: "ended", code: "CAPTURE_CHANGED" };
+        if (life.current !== s) return { status: "ended", code: "CAPTURE_CHANGED" };
         finish("CAPTION_SUBSCRIPTION_FAILED"); return { status: "unavailable", code: "CAPTION_SUBSCRIPTION_FAILED" };
       }
       if (assisted && action === "start") { const code = enableCaptions(s); if (code) return { status: code === "CAPTURE_CHANGED" ? "ended" : "unavailable", code }; }
     }
-    if (!current || current.owner !== captureId) return { status: "ended", code: terminal?.owner === captureId ? terminal.code : "CAPTURE_CHANGED",
-      diagnostics: terminal?.owner === captureId ? { ...terminal.stats } : undefined };
-    if (action !== "start" && action !== "recover" && action !== "read") return { status: "unavailable", code: "INVALID_CAPTURE" };
-    const s = current; if (!valid(s)) return { status: "ended", code: terminal?.code ?? "CAPTURE_CHANGED", diagnostics: { ...terminal?.stats } };
-    renew(s);
-    return { status: "live", meetingId, platform: "Google Meet", blocks: [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []), diagnostics: { ...s.stats } };
+    return life.epilogue(params, { platform: "Google Meet", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []) });
   }
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
   try {

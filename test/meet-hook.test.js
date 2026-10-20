@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import vm from "node:vm";
 
-const source = await readFile(new URL("../extension/meet-hook.js", import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const readSource = async name => readFile(new URL("../extension/" + name, import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const source = await readSource("hook-core.js") + "\n" + await readSource("meet-hook.js");
 const key = "__liveCaptionsRtc_v1", meetingId = "meet.google.com/abc-defg-hij";
 const bytes = (...parts) => Uint8Array.from(parts.flatMap(p => [...p]));
 function uint(value) { let n = BigInt(value); const out = []; do { let b = Number(n & 127n); n >>= 7n; out.push(b | (n ? 128 : 0)); } while (n); return Uint8Array.from(out); }

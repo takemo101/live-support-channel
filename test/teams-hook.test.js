@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-const source = await readFile(new URL("../extension/teams-hook.js", import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const readSource = async name => readFile(new URL("../extension/" + name, import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
+const source = await readSource("hook-core.js") + "\n" + await readSource("teams-hook.js");
 const key = "__liveCaptionsRtc_v1", meetingId = "teams.microsoft.com/call";
 const encode = (value, prefix = "") => new TextEncoder().encode(prefix + (typeof value === "string" ? value : JSON.stringify(value))).buffer;
 const item = (ts, userId, version, text, extra = {}) => ({ id: `msg-${ts}/${version}`, userId, timestampAudioSent: ts, text, ...extra });
@@ -147,4 +148,12 @@ test("channels created before and after the peer connection are both observed", 
   const f = fixture(t, { label: "other" }); const late = f.pc.createDataChannel("main-channel");
   f.command("start"); late.message(encode(results(item(1, "u", 1, "boundary")))); late.message(encode(results(item(2, "u", 1, "seen"))));
   assert.equal(f.command("read").blocks[0].transcript, "seen"); f.command("reset");
+});
+test("the shared core is handed over once and never stays reachable by page scripts", async t => {
+  const f = fixture(t);
+  assert.equal(f.page.__liveCaptionsHookCore, undefined);
+  const lone = { location: { protocol: "https:", hostname: "teams.microsoft.com", pathname: "/v2/" }, RTCPeerConnection: class {}, addEventListener() {} };
+  lone.top = lone;
+  vm.runInContext((await readFile(new URL("../extension/teams-hook.js", import.meta.url), "utf8")), vm.createContext({ window: lone }));
+  assert.equal(lone[key], undefined, "a hook without its core installs nothing");
 });

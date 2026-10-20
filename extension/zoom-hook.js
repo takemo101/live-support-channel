@@ -1,38 +1,23 @@
 // MAIN/document_start on the Zoom web client. Reads only the caption box the user has made visible, and only after an explicit start.
 // No transcript processing while idle; never mutates the page, sends, or touches tokens, HTTP, sockets or app state.
 (() => {
-  const page = window, key = "__liveCaptionsRtc_v1";
-  if (page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "app.zoom.us" || page[key]) return;
+  const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
+  try { delete page.__liveCaptionsHookCore; } catch {}
+  if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "app.zoom.us" || page[key]) return;
   const { MutationObserver: Observer } = page;
-  const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
-  const timeout = page.setTimeout.bind(page), cancel = page.clearTimeout.bind(page);
-  const LEASE = 2000, BOX = ".live-transcription-subtitle__box", FRAME = "#webclient";
-  let current = null, terminal = null, generation = 0;
+  const wallTime = page.Date.now.bind(page.Date);
+  const BOX = ".live-transcription-subtitle__box", FRAME = "#webclient";
   const fail = code => { throw Object.assign(new Error(code), { code }); };
   const currentMeeting = () => {
     const match = page.location.protocol === "https:" && page.location.hostname === "app.zoom.us" ? /^\/wc\/(\d{5,15})\//.exec(page.location.pathname) : null;
     return match ? `app.zoom.us/wc/${match[1]}` : null;
   };
   const frameDocument = () => { try { return page.document.querySelector(FRAME)?.contentDocument ?? null; } catch { return null; } };
-  function finish(code) {
-    const s = current; if (!s) return generation;
-    const retired = ++generation;
-    current = null; cancel(s.timer);
+  const life = core(page, { meeting: currentMeeting, cleanup(s) {
     try { s.observer?.disconnect(); } catch {}
-    terminal = { owner: s.owner, generation: s.generation, meetingId: s.meetingId, code, stats: { ...s.stats, queued: 0, inFlight: 0 } };
     s.records.length = 0; s.speakers.clear(); s.observed = null;
-    return retired;
-  }
-  function valid(s) {
-    if (current !== s) return false;
-    if (now() >= s.deadline) { finish("CAPTURE_EXPIRED"); return false; }
-    if (currentMeeting() !== s.meetingId) { finish("MEETING_CHANGED"); return false; }
-    return true;
-  }
-  function renew(s) {
-    cancel(s.timer); s.deadline = now() + LEASE;
-    s.timer = timeout(() => { if (current === s) finish("CAPTURE_EXPIRED"); }, LEASE);
-  }
+  } });
+  const { finish, valid } = life;
   const clean = value => value.replace(/\s+/g, " ").trim();
   // Zoom shows rolling text: the new display either extends the old one or drops its beginning. Returns the appended part, or null if unrelated.
   function continuation(previous, next) {
@@ -106,48 +91,32 @@
   }
   function watch(s) {
     try { sample(s); }
-    catch (error) { if (current === s) finish(["CAPTION_LIMIT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN"); }
+    catch (error) { if (life.current === s) finish(["CAPTION_LIMIT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN"); }
   }
   function metadata() {
     const id = currentMeeting();
     const code = !id ? "NOT_MEETING_PAGE" : frameDocument() ? "READY" : "ZOOM_FRAME_NOT_FOUND";
-    const stats = current?.stats ?? terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
+    const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
     return { status: "ready", source: "zoom-dom-experimental", platform: "Zoom",
       meetings: id ? [{ id, title: "Zoom Webクライアント（画面字幕・試験版）" }] : [], captionReady: code === "READY", code,
       diagnostics: { peers: 0, captionChannels: 0, ...stats } };
   }
-  function command({ action = "discover", meetingId, captureId, previousCaptureId } = {}) {
-    if (action === "reset") {
-      if (current?.owner === captureId) {
-        const retired = finish("CAPTURE_RESET"); if (generation === retired) terminal = null;
-      }
-      else if (terminal?.owner === captureId) terminal = null;
-      return { status: "idle" };
-    }
-    if (action === "discover") return metadata();
-    if (!currentMeeting() || currentMeeting() !== meetingId) return { status: "ended", code: "MEETING_CHANGED" };
-    if (typeof captureId !== "string" || !captureId.length || captureId.length > 128) return { status: "unavailable", code: "INVALID_CAPTURE" };
-    // Recovery only continues the same meeting after its own lease lapsed; any other end state needs a user action.
-    if (action === "recover" && (current || terminal?.code !== "CAPTURE_EXPIRED" || terminal.meetingId !== meetingId
-      || typeof previousCaptureId !== "string" || terminal.owner !== previousCaptureId || previousCaptureId === captureId)) return { status: "ended", code: "CAPTURE_CHANGED" };
+  function command(params = {}) {
+    const early = life.prologue(params, metadata); if (early) return early;
+    const { action, meetingId, captureId } = params;
     if (action === "start" || action === "recover") {
       const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
       const retired = finish("CAPTURE_REPLACED");
-      if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
-      terminal = null;
+      if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
+      life.clearTerminal();
       const s = { owner: captureId, meetingId, observer: null, observed: null, elements: new WeakMap(), records: [], speakers: new Map(), characters: 0,
         stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } };
-      current = s; s.generation = ++generation; renew(s);
+      life.activate(s);
       try { sample(s, true); }
-      catch (error) { if (current === s) finish(error?.code === "CAPTION_LIMIT" ? "CAPTION_LIMIT" : "CAPTION_FORMAT_UNKNOWN"); return { status: "unavailable", code: terminal.code }; }
+      catch (error) { if (life.current === s) finish(error?.code === "CAPTION_LIMIT" ? "CAPTION_LIMIT" : "CAPTION_FORMAT_UNKNOWN"); return { status: "unavailable", code: life.terminal.code }; }
     }
-    if (!current || current.owner !== captureId) return { status: "ended", code: terminal?.owner === captureId ? terminal.code : "CAPTURE_CHANGED",
-      diagnostics: terminal?.owner === captureId ? { ...terminal.stats } : undefined };
-    if (action !== "start" && action !== "recover" && action !== "read") return { status: "unavailable", code: "INVALID_CAPTURE" };
-    const s = current; if (!valid(s)) return { status: "ended", code: terminal?.code ?? "CAPTURE_CHANGED", diagnostics: { ...terminal?.stats } };
-    if (action === "read") { watch(s); if (current !== s) return { status: "ended", code: terminal?.code ?? "CAPTURE_CHANGED", diagnostics: { ...terminal?.stats } }; }
-    renew(s);
-    return { status: "live", meetingId, platform: "Zoom", blocks: s.records.flatMap(r => r.block ? [{ ...r.block }] : []), diagnostics: { ...s.stats } };
+    return life.epilogue(params, { platform: "Zoom", blocks: s => s.records.flatMap(r => r.block ? [{ ...r.block }] : []),
+      before: (s, action) => { if (action === "read") watch(s); } });
   }
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
   page.addEventListener("pagehide", () => finish("MEETING_CHANGED"));

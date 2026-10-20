@@ -4,14 +4,14 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const helper = fileURLToPath(new URL("./meet-hook.test.js", import.meta.url));
-const hook = fileURLToPath(new URL("../extension/meet-hook.js", import.meta.url));
+const helperUrl = new URL("./meet-hook.test.js", import.meta.url).href;
 for (const stop of ["reset", "expiry", "pagehide", "overflow"]) {
   test("queued raw frame is collectible before stalled conversion settles: " + stop, { timeout: 10000 }, () => {
     const script = `
       import assert from 'node:assert/strict';
       import { readFile } from 'node:fs/promises';
       const code = (await readFile(${JSON.stringify(helper)}, 'utf8')).split('\\ntest("document-start')[0]
-        .replace('new URL("../extension/meet-hook.js", import.meta.url)', ${JSON.stringify(JSON.stringify(hook))});
+        .replaceAll('import.meta.url', ${JSON.stringify(JSON.stringify(helperUrl))});
       const {fixture, packet} = await import('data:text/javascript;base64,' + Buffer.from(code + '\\nexport {fixture,packet};').toString('base64'));
       const cleanup=[]; const f=fixture({after(fn){cleanup.push(fn)}}); f.command('start');
       let release; class Delayed extends Blob { arrayBuffer(){return new Promise(r=>{release=r})} }

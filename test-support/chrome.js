@@ -23,7 +23,7 @@ export async function runInChrome(t, { hook, hostname, pathname, body = "", suit
     }
     await rm(temp, { recursive: true, force: true });
   });
-  const source = await readFile(new URL("../extension/" + hook, import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/hook-core.js", import.meta.url), "utf8") + "\n" + await readFile(new URL("../extension/" + hook, import.meta.url), "utf8");
   const html = "<!doctype html><html><body>" + body + "<script>"
     + 'const ServerPeer=window.RTCPeerConnection;const values={location:{protocol:"https:",hostname:' + JSON.stringify(hostname) + ',pathname:' + JSON.stringify(pathname) + '},RTCPeerConnection:ServerPeer};let scope;scope=new Proxy(window,{get(target,key){if(key==="top")return scope;if(Object.hasOwn(values,key))return values[key];const v=target[key];return ["setTimeout","clearTimeout","addEventListener"].includes(key)?v.bind(target):v;},set(target,key,value){values[key]=value;return true;}});'
     + "(function(window){" + source + "})(scope);"

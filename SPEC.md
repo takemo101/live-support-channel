@@ -136,6 +136,8 @@ snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはm
 
 正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert、未知の逆順IDや同番号異本文は停止する。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
 
+`hook-core.js` は全プラットフォーム共通の所有者・lease・終了状態・recoverの前提確認・コマンドの封筒だけを持ち、本文には触れない。manifestの各エントリは `js: [hook-core.js, <platform>-hook.js]` の順で、各hookがコアを一度だけ受け取って即座に消す（ページのスクリプトからは到達できず、コアが無いhookは何も入れない）。実Chromeでの拡張ロード時の実行順は未確認。
+
 panel.jsは同意・UI・世代管理・heartbeat・蓄積・HTTP、stream.jsは差分／再送、devtools.jsは非表示停止。bin、server、Skillの既存責務とreadonly設定は維持する。
 
 ## 6. HTTP／Channels契約
