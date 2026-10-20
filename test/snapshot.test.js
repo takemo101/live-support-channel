@@ -51,7 +51,7 @@ test("reset is metadata-only even when navigation moved to an unsupported host",
 });
 test("recover forwards only the new and previous owner IDs with the verified meeting", () => {
   const calls = [], api = { version: 1, command(params) { calls.push(params); return { status: "live" }; } };
-  inspect({ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", extra: "x" }, { api });
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old" }]);
+  inspect({ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", assistCaptions: true, extra: "x" }, { api });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", assistCaptions: true }]);
   assert.equal(inspect({ action: "recover", meetingId: "other", captureId: "new", previousCaptureId: "old" }, { api }).code, "MEETING_CHANGED");
 });

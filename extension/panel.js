@@ -4,7 +4,7 @@ import { CaptionStream } from "./stream.js";
 export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
-  let active = false, paused = false, busy = false, captionReady = false, failed = false;
+  let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false;
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map();
   const status = message => { el("status").textContent = message; };
@@ -20,6 +20,9 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     RTC_CONNECTION_CLOSED: "会議の接続が終了したため停止しました。会議に戻ってから「再確認」してください。",
     CAPTURE_EXPIRED: "読取りが一時的に途切れました。同じ会議へ自動で復旧します。",
     CAPTION_CHANNEL_CLOSED: "字幕チャネルが閉じたため停止しました。「再確認」から開始し直してください。",
+    MEDIA_SESSION_NOT_FOUND: "Meetの制御チャネルを特定できないため、字幕ボタンOFFでの開始はできません。Meetで字幕をONにするか、ページを再読み込みして参加し直してください。",
+    CAPTION_LANGUAGE_UNKNOWN: "Meetの字幕言語をまだ観測できていません。Meetの字幕設定で言語を一度選ぶか、字幕をONにしてください。",
+    CAPTION_ENABLE_FAILED: "字幕の開始指示を送れませんでした。再試行はしません。Meetで字幕をONにするか、ページを再読み込みしてください。",
     CAPTION_SUBSCRIPTION_FAILED: "字幕チャネルを追加できません。標準字幕・組織設定・他の字幕拡張との競合を確認してください。",
     CAPTION_FORMAT_UNKNOWN: "未対応の字幕通信形式です。本文を送らず停止しました。診断コードと件数だけを報告してください。",
     CAPTION_BACKLOG_LIMIT: "字幕の処理待ち上限に達したため停止しました。",
@@ -56,7 +59,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     el("state").textContent = label; el("state").className = "state " + kind;
   }
   function controls() {
-    for (const id of ["token", "meeting", "refresh", "consent"]) el(id).disabled = active;
+    for (const id of ["token", "meeting", "refresh", "consent", "assist"]) el(id).disabled = active;
     el("start").disabled = active || !captionReady || !el("meeting").value || !el("consent").checked;
     el("stop").disabled = !active;
     el("pause").disabled = !active || busy || !stream.run;
@@ -66,7 +69,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     badge();
   }
   function evaluate(action, owner = captureId, previousCaptureId) {
-    const params = { action, meetingId, captureId: owner, previousCaptureId };
+    const params = { action, meetingId, captureId: owner, previousCaptureId, assistCaptions: assistCaptions && (action === "discover" || action === "start") ? true : undefined };
     return new Promise((resolve, reject) => {
       inspectedWindow.eval(`(${readCaptions.toString()})(${JSON.stringify(params)})`, {}, (result, error) => {
         if (error === true || error?.isError || error?.isException) {
@@ -101,7 +104,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   async function refresh() {
     if (active) return;
     const run = ++generation;
-    captionReady = false; failed = false; el("meeting").replaceChildren(); controls();
+    captionReady = false; failed = false; assistCaptions = el("assist").checked === true; el("meeting").replaceChildren(); controls();
     try {
       const result = await evaluate("discover");
       if (active || run !== generation) return;
@@ -182,7 +185,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (busy || (resume ? !active || !paused : active)) return;
     if (!resume && (!captionReady || !el("consent").checked || !el("meeting").value)) { status("字幕の準備確認と参加者同意が必要です。"); return; }
     if (!resume && !/^[A-Za-z0-9_-]{43}$/.test(el("token").value.trim())) { status("ペアリングトークン（43文字）を確認してください。"); return; }
-    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; }
+    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; }
     active = true; busy = true; failed = false;
     const run = ++generation;
     controller = new AbortController(); captureId = crypto.randomUUID();
@@ -224,6 +227,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   el("stop").addEventListener("click", () => stop());
   el("meeting").addEventListener("change", controls);
   el("consent").addEventListener("change", controls);
+  el("assist").addEventListener("change", () => { void refresh(); });
   onNavigated.addListener(navigate); controls();
   void Promise.resolve(storage?.get()).then(token => { if (typeof token === "string" && !el("token").value && !active) el("token").value = token; }).catch(() => {});
   return { stop, refresh, dispose() { stop(); onNavigated.removeListener(navigate); } };

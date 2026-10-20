@@ -37,7 +37,7 @@ function fixture(t, { native = true, label = "captions_v2", host = "meet.google.
   const page = {
     location: { protocol: "https:", hostname: host, pathname: "/abc-defg-hij" },
     document: { querySelectorAll(selector) { assert.equal(selector, "button[aria-label]"); return [button]; }, get body() { throw Error("no caption DOM access"); } },
-    RTCPeerConnection: Peer, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, DataView, Blob, DecompressionStream: inflate,
+    RTCPeerConnection: Peer, RTCDataChannel: Channel, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, DataView, Blob, DecompressionStream: inflate,
     performance: { now: () => now }, Date,
     setTimeout(fn) { const id = ++clockId; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
     addEventListener(type, fn) { pageEvents.set(type, fn); },
@@ -362,4 +362,84 @@ test("recover during decoder drain waits without losing the expired terminal, th
   release(raw.buffer); await new Promise(r => setImmediate(r));
   assert.equal(recover(f, "new", "old").status, "live"); assert.equal(f.command("read", "new").blocks.length, 0);
   f.command("reset", "new");
+});
+
+// --- caption-less start (opt-in): observe media-session control numbers, write one caption-config command ---
+const text = (field, value) => string(field, value);
+const mediaCommand = (op, lang) => {
+  const update = lang === undefined ? [] : blob(3, bytes(blob(1, blob(9, bytes(text(1, lang), text(2, lang)))), blob(2, text(1, "client_config.caption_config"))));
+  return blob(1, blob(2, bytes(scalar(1, op), update)));
+};
+const mediaAck = seq => blob(1, blob(1, bytes(scalar(2, seq), scalar(3, 1))));
+function mediaFixture(t, { opened = true } = {}) {
+  const f = fixture(t); f.button.getAttribute = () => "Turn on captions (c)";
+  const media = opened ? f.pc.createDataChannel("media-session") : null;
+  const assist = (action = "start", owner = "synthetic-owner") => f.api.command({ action, meetingId, captureId: owner, assistCaptions: true });
+  return { ...f, media, assist, sent: () => media.sent.map(b => [...b]) };
+}
+test("assisted start with the caption button OFF writes one config command from observed Meet numbers", async t => {
+  const f = mediaFixture(t);
+  f.media.send(mediaCommand(7, "ja")); f.media.send(mediaAck(12)); f.media.sent.length = 0;
+  assert.equal(f.assist("discover").code, "READY"); assert.equal(f.sent().length, 0);
+  assert.equal(f.assist().status, "live");
+  assert.deepEqual(f.sent(), [mediaCommand(8, "ja"), mediaAck(13), mediaAck(14)].map(b => [...b]));
+  f.channel.message(packet(1, "boundary")); await f.drain(); f.channel.message(packet(2, "heard without the toggle")); await f.drain();
+  assert.equal(f.command("read").blocks[0].transcript, "heard without the toggle");
+  f.command("reset");
+});
+test("without opt-in, a captions-OFF start is still refused and nothing is written", t => {
+  const f = mediaFixture(t); f.media.send(mediaCommand(1, "ja")); f.media.sent.length = 0;
+  assert.equal(f.command("discover").code, "CAPTIONS_OFF"); assert.equal(f.command("start").code, "CAPTIONS_OFF");
+  assert.equal(f.media.sent.length, 0);
+});
+test("assist writes nothing when the caption button is already ON", t => {
+  const f = mediaFixture(t); f.button.getAttribute = () => "Turn off captions (c)";
+  f.media.send(mediaCommand(1, "ja")); f.media.sent.length = 0;
+  assert.equal(f.assist().status, "live"); assert.equal(f.media.sent.length, 0); f.command("reset");
+});
+test("assist is refused, without replacing a capture, when media-session or the language was never observed", t => {
+  const none = mediaFixture(t, { opened: false });
+  assert.equal(none.assist("discover").code, "MEDIA_SESSION_NOT_FOUND"); assert.equal(none.assist().code, "MEDIA_SESSION_NOT_FOUND");
+  const silent = mediaFixture(t);
+  silent.media.send(mediaAck(3)); silent.media.sent.length = 0;
+  assert.equal(silent.assist("discover").code, "CAPTION_LANGUAGE_UNKNOWN");
+  silent.button.getAttribute = () => "Turn off captions (c)"; assert.equal(silent.command("start", "kept").status, "live");
+  silent.button.getAttribute = () => "Turn on captions (c)";
+  assert.equal(silent.assist("start", "other").code, "CAPTION_LANGUAGE_UNKNOWN");
+  silent.button.getAttribute = () => "Turn off captions (c)"; assert.equal(silent.command("read", "kept").status, "live"); assert.equal(silent.media.sent.length, 0); silent.command("reset", "kept");
+});
+test("the config command is attempted once per media-session channel, even after failure or recovery", async t => {
+  const f = mediaFixture(t); f.media.send(mediaCommand(2, "en-US")); f.media.sent.length = 0;
+  assert.equal(f.assist("start", "one").status, "live"); assert.equal(f.media.sent.length, 3);
+  f.command("reset", "one"); assert.equal(f.assist("start", "two").status, "live"); assert.equal(f.media.sent.length, 3);
+  f.expire(); assert.equal(f.command("read", "two").code, "CAPTURE_EXPIRED");
+  assert.equal(recover(f, "three", "two").status, "live"); assert.equal(f.media.sent.length, 3);
+  f.command("reset", "three");
+  const failing = mediaFixture(t); failing.media.send(mediaCommand(2, "ja"));
+  failing.media.onSend = () => { throw Error("closed"); };
+  assert.equal(failing.assist("start", "a").code, "CAPTION_ENABLE_FAILED");
+  assert.equal(failing.assist("start", "b").status, "live");
+  failing.command("reset", "b");
+});
+test("recover cannot enable assist for a capture that was not assisted", t => {
+  const f = mediaFixture(t); f.media.send(mediaCommand(2, "ja")); f.button.getAttribute = () => "Turn off captions (c)";
+  f.command("start", "old"); f.expire(); f.button.getAttribute = () => "Turn on captions (c)";
+  assert.equal(f.api.command({ action: "recover", meetingId, captureId: "new", previousCaptureId: "old", assistCaptions: true }).code, "CAPTIONS_OFF");
+  f.command("reset", "old");
+});
+test("an assisted capture stops if captions become unavailable for another reason", t => {
+  const f = mediaFixture(t); f.media.send(mediaCommand(2, "ja")); f.assist("start");
+  f.button.getAttribute = () => ""; assert.equal(f.command("read").code, "CAPTION_CONTROL_NOT_FOUND");
+});
+test("the media-session observer is pass-through, label-scoped and keeps only numbers and a language code", t => {
+  const f = fixture(t), native = f.pc.createDataChannel("media-session"), other = f.pc.createDataChannel("collections");
+  const payload = mediaCommand(5, "ja"); native.send(payload);
+  assert.deepEqual([...native.sent[0]], [...payload]);
+  const probe = Uint8Array.from([1, 2, 3]);
+  for (const name of ["buffer", "byteOffset"]) Object.defineProperty(probe, name, { get() { assert.fail("non media-session payload inspected"); } });
+  other.send(probe);
+  assert.equal(other.sent.length, 1);
+  assert.doesNotThrow(() => native.send(Uint8Array.from([255, 255, 255])));
+  assert.doesNotThrow(() => native.send("text frame"));
+  assert.equal(native.sent.length, 3);
 });

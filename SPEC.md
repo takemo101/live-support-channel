@@ -126,6 +126,8 @@ extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環�
 
 同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
 
+**実験オプション（パネルのチェックボックス、既定OFF）：字幕ボタンOFFでの開始。** 例外としてこの時だけ、(1) `RTCDataChannel.prototype.send` を観測専用で包み、ラベルが `media-session` のMeet自身の制御フレーム（4096 bytes以下）から、コマンド番号`op`・ACK連番・字幕言語コード（`[A-Za-z]{2,3}(-…)`、32文字以下）の3値だけを保持する（他のラベルは中身に触れず、送信内容は変更しない）。(2) 字幕ボタンがOFFのstart時に限り、観測した言語と番号から `op+1` の字幕設定コマンド（BigPacket.envelope(1).command(2){op=1, captionUpdate=3{clientConfig=1{captionConfig=9{lang_1,lang_2}}, updateMask=2{paths=["client_config.caption_config"]}}}）と、ACK連番+1／+2の小フレーム（envelope(1).ack(1){seq=2, ok=3}）2つを、media-sessionチャネルへ**1チャネルにつき1回だけ**書き込む。再試行・Meet送信の書換えはしない。recoverでは書き込まず、元がassistedだった場合だけ字幕OFFを許容する。形式はTactiq 3.1.7185の静的解析（実行なし）による。media-sessionが特定できない／言語未観測／送信失敗は `MEDIA_SESSION_NOT_FOUND`／`CAPTION_LANGUAGE_UNKNOWN`／`CAPTION_ENABLE_FAILED`。**実Meetで未検証。連番の衝突などでMeetの制御通信を乱す恐れがあり、字幕設定がMeet側に残り得る。**非機密のテスト会議でのみ確認する。
+
 snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
 正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert、未知の逆順IDや同番号異本文は停止する。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
@@ -205,7 +207,8 @@ TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override�
 | RTC_CONNECTION_NOT_FOUND | 会議参加・標準字幕ON・参加前注入を確認。後から既存接続を見つける保証はない |
 | RTC_CONNECTION_AMBIGUOUS | 接続を特定できないため取得しない |
 | RTC_PREPARE_FAILED／RTC_RESOURCE_LIMIT | 他の字幕拡張との競合・管理ポリシー・上限を確認。安全機能を無効化しない |
-| CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認 |
+| CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認。OFFのまま使うなら実験オプション |
+| MEDIA_SESSION_NOT_FOUND／CAPTION_LANGUAGE_UNKNOWN／CAPTION_ENABLE_FAILED | 実験オプション専用。制御チャネル未特定／言語未観測／送信失敗。再試行せず、字幕をONにするかページ再読み込み |
 | CAPTION_SUBSCRIPTION_FAILED | チャネル作成失敗。字幕・組織設定・拡張競合を確認 |
 | CAPTION_FORMAT_UNKNOWN | 未対応wire。本文／生パケットを共有せずコードと件数を報告 |
 | CAPTION_DECODE_BUSY | 前の取消不能読取りの終了待ち。待って再確認、止まる場合は非機密テストでページ再読み込み |

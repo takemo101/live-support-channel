@@ -13,7 +13,7 @@
       <h1>Live Captions → Claude Code</h1>
       <span id="state" class="state idle">未準備</span>
     </header>
-    <p id="status" role="status" aria-live="polite">Meetの字幕がONの会議タブで、このパネルを開いたまま使います。</p>
+    <p id="status" role="status" aria-live="polite">Meetの字幕がONの会議タブで、このパネルを開いたまま使います（字幕OFFでの開始は下の実験オプション）。</p>
     <section id="setup">
       <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
       <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値">
@@ -23,6 +23,7 @@
         <button id="refresh" type="button">再確認</button>
       </div>
       <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱いを確認しました</label>
+      <label class="consent"><input id="assist" type="checkbox">実験：Meetの字幕ボタンがOFFでも開始する（Meetの字幕設定を1回だけ書き込みます。既定OFF・再試行なし）</label>
     </section>
     <div class="actions">
       <button id="start" class="primary" type="button" disabled>転送開始</button>
