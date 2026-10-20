@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "tactiq-live": {
+    "live-support": {
       "command": "node",
       "args": [
         "server/main.js"

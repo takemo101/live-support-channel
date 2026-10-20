@@ -212,6 +212,6 @@ if (globalThis.chrome?.devtools && globalThis.document) {
   const panel = createPanel({ document, inspectedWindow: chrome.devtools.inspectedWindow, onNavigated: chrome.devtools.network.onNavigated, fetch: globalThis.fetch.bind(globalThis), setInterval, clearInterval,
     storage: chrome.storage?.session && { get: async () => (await chrome.storage.session.get("token")).token, set: token => chrome.storage.session.set({ token }), remove: () => chrome.storage.session.remove("token") } });
   addEventListener("pagehide", () => panel.dispose(), { once: true });
-  addEventListener("tactiq-panel-hidden", () => panel.stop("パネルを離れたため停止しました。"));
+  addEventListener("live-support-panel-hidden", () => panel.stop("パネルを離れたため停止しました。"));
   void panel.refresh();
 }

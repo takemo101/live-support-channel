@@ -1,7 +1,7 @@
 {
-  "name": "tactiq-live-channel",
+  "name": "live-support",
   "version": "0.7.0",
-  "bin": { "tactiq-live": "bin/tactiq-live.js" },
+  "bin": { "live-support": "bin/live-support.js" },
   "files": ["bin/", "server/", "extension/", "skills/", ".claude-plugin/", "README.md", "SPEC.md", "docs/rea-analysis-report.md", "docs/native-captions.md"],
   "repository": { "type": "git", "url": "git+https://github.com/takemo101/tactiq-live-channel.git" },
   "private": true,

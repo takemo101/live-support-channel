@@ -8,24 +8,24 @@ import { createServer } from "node:net";
 import { once } from "node:events";
 import { runtimeDirectory } from "../server/runtime.js";
 
-const cli = resolve("bin/tactiq-live.js");
+const cli = resolve("bin/live-support.js");
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "tactiq-install-"));
+  const root = await mkdtemp(join(tmpdir(), "live-support-install-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = join(root, "project");
   await mkdir(project);
   const runtime = join(root, "user-runtime");
-  const env = { ...process.env, PATH: join(root, "no-executables"), TACTIQ_RUNTIME_DIR: runtime };
+  const env = { ...process.env, PATH: join(root, "no-executables"), LIVE_SUPPORT_RUNTIME_DIR: runtime };
   const run = (...args) => spawnSync(process.execPath, [cli, ...args], { cwd: project, env, encoding: "utf8", timeout: 10000 });
   return { root, project, runtime, env, run };
 }
 test("default runtime is user-scoped, not package or project-scoped", () => {
-  assert.equal(runtimeDirectory({}), join(homedir(), ".tactiq-live-channel"));
-  assert.equal(runtimeDirectory({ TACTIQ_RUNTIME_DIR: "/tmp/tactiq-override" }), "/tmp/tactiq-override");
+  assert.equal(runtimeDirectory({}), join(homedir(), ".live-support"));
+  assert.equal(runtimeDirectory({ LIVE_SUPPORT_RUNTIME_DIR: "/tmp/live-support-override" }), "/tmp/live-support-override");
 });
 test("package exposes an installable CLI and restricts shipped files", async () => {
   const p = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(p.bin?.["tactiq-live"], "bin/tactiq-live.js");
+  assert.equal(p.bin?.["live-support"], "bin/live-support.js");
   for (const path of ["bin/", "server/", "extension/", "SPEC.md"]) assert.ok(p.files.includes(path));
   for (const path of ["artifacts/", "research/", "test/", ".runtime/"]) assert.ok(!p.files.includes(path));
 });
@@ -67,7 +67,7 @@ test("Claude launcher preserves each project cwd and isolates launch tokens", as
   await chmod(fake, 0o755);
   f.env.PATH = bin + ":" + f.env.PATH;
   f.env.TEST_CLAUDE_RECORD = record;
-  f.env.TACTIQ_PORT = "0";
+  f.env.LIVE_SUPPORT_PORT = "0";
   let previous;
   for (const name of ["project-a", "project-b"]) {
     const cwd = join(f.root, name);
@@ -78,14 +78,14 @@ test("Claude launcher preserves each project cwd and isolates launch tokens", as
     assert.equal(actual.cwd, await realpath(cwd));
     const index = actual.args.indexOf("--mcp-config");
     assert.ok(index >= 0);
-    const config = JSON.parse(actual.args[index + 1]).mcpServers["tactiq-live"];
+    const config = JSON.parse(actual.args[index + 1]).mcpServers["live-support"];
     assert.equal(config.command, process.execPath);
     assert.ok(isAbsolute(config.args[0]));
     await access(config.args[0]);
-    assert.equal(config.env.TACTIQ_RUNTIME_DIR, f.runtime);
+    assert.equal(config.env.LIVE_SUPPORT_RUNTIME_DIR, f.runtime);
     assert.ok(actual.args.includes("--strict-mcp-config"));
     assert.equal(actual.args[actual.args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill");
-    assert.ok(actual.args.includes("server:tactiq-live"));
+    assert.ok(actual.args.includes("server:live-support"));
     const token = (await readFile(join(f.runtime, "token"), "utf8")).trim();
     if (previous) assert.notEqual(token, previous);
     assert.ok(!p.stdout.includes(token) && !p.stderr.includes(token));
@@ -99,7 +99,7 @@ test("an existing launcher lease blocks startup and token rotation before MCP bi
   assert.equal(f.run("setup").status, 0);
   const before = await readFile(join(f.runtime, "token"), "utf8");
   await writeFile(join(f.runtime, "launcher.lock"), "test-owned lease\n", { mode: 0o600 });
-  f.env.TACTIQ_PORT = "0";
+  f.env.LIVE_SUPPORT_PORT = "0";
   const p = f.run("claude");
   assert.equal(p.status, 1);
   assert.match(p.stderr, /lock|previous|前の/i);
@@ -115,7 +115,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) test(signal + " with TTY stdin stops
   const hook = join(f.root, "tty.mjs");
   await writeFile(hook, 'Object.defineProperty(process.stdin, "isTTY", { value: true });');
   const child = spawn(process.execPath, ["--import", hook, cli, "claude"], {
-    cwd: f.project, env: { ...f.env, PATH: bin + ":" + f.env.PATH, TACTIQ_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"],
+    cwd: f.project, env: { ...f.env, PATH: bin + ":" + f.env.PATH, LIVE_SUPPORT_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"],
   });
   let fakePid;
   t.after(() => {
@@ -142,7 +142,7 @@ test("startup interruption releases a lease before the Claude child exists", asy
     'syncBuiltinESMExports();',
   ].join("\n"));
   const child = spawn(process.execPath, ["--import", hook, cli, "claude"], {
-    cwd: f.project, env: { ...f.env, TACTIQ_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"],
+    cwd: f.project, env: { ...f.env, LIVE_SUPPORT_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
   await once(child.stdout, "data");
@@ -157,7 +157,7 @@ test("occupied receiver port refuses another Claude launch", async t => {
   const server = createServer();
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   t.after(() => new Promise(resolve => server.close(resolve)));
-  f.env.TACTIQ_PORT = String(server.address().port);
+  f.env.LIVE_SUPPORT_PORT = String(server.address().port);
   const p = f.run("claude");
   assert.equal(p.status, 1);
   assert.match(p.stderr, /port|ポート/i);

@@ -137,7 +137,7 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
   assert.ok(result.checks >= 20); assert.equal(result.sent.length, 5);
 
   const runtime = join(temp, "runtime"); await mkdir(runtime, { mode: 0o700 });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../server/main.js", import.meta.url))], env: { TACTIQ_RUNTIME_DIR: runtime, TACTIQ_PORT: "0" }, stderr: "pipe" });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../server/main.js", import.meta.url))], env: { LIVE_SUPPORT_RUNTIME_DIR: runtime, LIVE_SUPPORT_PORT: "0" }, stderr: "pipe" });
   const client = new Client({ name: "rtc-caption-fixture", version: "1" }, { capabilities: {} });
   let logs = "", readyTimer, eventTimer, finish;
   const endpoint = new Promise((resolve, reject) => {

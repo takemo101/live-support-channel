@@ -1,6 +1,6 @@
 # Live Captions → Claude Code
 
-**Google Meetの標準字幕**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「要点・相手の問い・口にできる返答案・事業／技術の提案」を短く出す試作です。**Tactiqは不要**です。CLI名 `tactiq-live` と保存先は互換性のため維持しています。受信先は一度に1プロジェクトです。
+**Google Meetの標準字幕**をClaude Codeの**Channels**へ渡し、現在のプロジェクトを踏まえて「要点・相手の問い・口にできる返答案・事業／技術の提案」を短く出す試作です。**Tactiqは不要**です。CLI名 `live-support` と保存先は互換性のため維持しています。受信先は一度に1プロジェクトです。
 
 | 取得対象 | 状態 |
 | --- | --- |
@@ -19,10 +19,10 @@ npmレジストリではなく、この公開GitHubリポジトリからイン�
 
 ```bash
 npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
-tactiq-live setup
+live-support setup
 ```
 
-`setup` が表示する拡張フォルダ（通常 `~/.tactiq-live-channel/extension`）を、Chromeの `chrome://extensions` → デベロッパーモード →「パッケージ化されていない拡張機能を読み込む」で**一度だけ**読み込みます。
+`setup` が表示する拡張フォルダ（通常 `~/.live-support/extension`）を、Chromeの `chrome://extensions` → デベロッパーモード →「パッケージ化されていない拡張機能を読み込む」で**一度だけ**読み込みます。
 
 **サイトアクセスはMeet・Teams・Zoomだけです（Teamsはv0.6、Zoomはv0.7）。** `https://meet.google.com/*`、`https://teams.microsoft.com/*`、`https://teams.live.com/*`、`https://teams.cloud.microsoft/*`、`https://app.zoom.us/*` に限り、MAIN worldの `document_start` でフックを準備します。Chromeではこのサイトのデータの「読み取りと変更」に相当します。準備中は本文を処理・保持・送信しません。Chromeへの権限許可・拡張読込みは本人操作で、ユーザー設定や組織ポリシーを自動変更しません。
 
@@ -43,13 +43,13 @@ just uninstall
 
 ```bash
 cd /path/to/your-project
-tactiq-live claude
+live-support claude
 ```
 
 別ターミナルで、その起動用の新しいペアリングトークンを確認します。
 
 ```bash
-tactiq-live token
+live-support token
 ```
 
 **tokenをGitHubやチャットへ貼らないでください。** 次の順で操作します。
@@ -89,29 +89,29 @@ Skillは [`skills/meeting/SKILL.md`](skills/meeting/SKILL.md) にあります。
 
 最初に会議で表示されている**本人の名前**を聞き、本人の発言はカード・要約・引用に含めません（名前が確認できるまで返答カードは出しません）。提案はプロジェクトの文書とコードを確認したうえで、事業・技術の観点から根拠付きで出します。役割・会議の目的を一言添えると、返答の提案を絞れます。仕様から確認できた事実と推測を区別し、納期や予算を本人に代わって約束しません。相づちだけなら同じ要約を繰り返しません。
 
-- 助言を止める：`/tactiq-live:meeting stop`
-- 助言を再開する：`/tactiq-live:meeting start`
+- 助言を止める：`/live-support:meeting stop`
+- 助言を再開する：`/live-support:meeting start`
 - **字幕の転送を止める：Chromeパネルの停止ボタン。助言停止だけでは転送は止まりません。**
 
-Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku tactiq-live claude` と起動できます。実Haikuでの品質・速度・費用は未検証です。
+Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku live-support claude` と起動できます。実Haikuでの品質・速度・費用は未検証です。
 
 ### プロジェクトを切り替える
 
 1. 補助パネルを停止する。
-2. 前の `tactiq-live claude` を終了する。
-3. 次のプロジェクトで `tactiq-live claude` を起動する。
-4. `tactiq-live token` で**新しい値**を取り直してペアリングする。
+2. 前の `live-support claude` を終了する。
+3. 次のプロジェクトで `live-support claude` を起動する。
+4. `live-support token` で**新しい値**を取り直してペアリングする。
 
 使用中のポートやランチャーの排他ファイルがあれば二重起動を拒否します。トークンは起動ごとに更新されるため、古いパネルが前のトークンで新しいプロジェクトへ送ることはできません。
 
 ## 安全性と制約
 
 - 受信先は `127.0.0.1:43821` のみ。Bearer認証、Host／Origin、schema、サイズ、順序を検査します。
-- トークン・拡張はプロジェクト外の `~/.tactiq-live-channel/` に置きます。トークンは0600、ディレクトリは0700。本文はブリッジのログやファイルへ保存しません。
+- トークン・拡張はプロジェクト外の `~/.live-support/` に置きます。トークンは0600、ディレクトリは0700。本文はブリッジのログやファイルへ保存しません。
 - **転送した字幕と読取ったプロジェクト資料はClaude Codeを通じてAnthropicへ送信され、会話に残り得ます。** 起動直後から資料を読むため、非機密のプロジェクトを選び、会議参加者同意・組織規程・送信先のデータ取扱いを確認してください。
 - 利用ツールは `Read,Glob,Grep,Skill` のみ。`--restricted`、`--strict-mcp-config`、手動承認モードを指定し、編集・Shell・外部送信ツールを有効にしません。hooksとSkillのShell前処理も無効にします。
 - ファイルツールを作業ディレクトリ内へ制限し、`.env`・鍵・認証設定・ランタイム保存先等の読取りをdeny設定します。ホーム／filesystem rootからの起動は拒否します。これはOSサンドボックスや全秘密情報の自動検出ではなく、組織のmanaged設定が優先します。実Claudeでの権限拒否は受入確認が必要です。
-- 自作Channelsには `--dangerously-load-development-channels server:tactiq-live` の明示的な開発用許可が必要です。ランチャーが渡しますが、Claude側の認証・承認・組織制限を迂回しません。
+- 自作Channelsには `--dangerously-load-development-channels server:live-support` の明示的な開発用許可が必要です。ランチャーが渡しますが、Claude側の認証・承認・組織制限を迂回しません。
 - Channelsはresearch previewです。Bedrock／GoogleのAgent Platform／Microsoft Foundryは非対応との公式記載があります。
 - HTTP 202はSDK通知の書出し成功であり、AIによる受領・理解・応答完了の保証ではありません。
 - Meetの非公開な `captions`／`captions_v2` の形式に依存します。字幕ボタンの判定は日本語／英語UIが対象。未知の形式や接続は停止し、字幕本文をDOMから読むfallback・チャット・fetch／WebSocket・別拡張の内部状態へfallbackしません（話者名の照合にだけ、画面に表示された字幕リストを読みます）。
@@ -120,13 +120,13 @@ Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku tactiq-live claude` と起動で�
 
 ## 更新・削除
 
-転送とランチャーを止めてから再インストールし、`tactiq-live setup` を実行します。Chromeで補助拡張を再読み込みし、Meet限定のサイトアクセスを許可して、**Meetタブも参加前に再読み込み**してください。参加済みの接続を後から発見する保証はありません。拡張の保存先は同じです。
+転送とランチャーを止めてから再インストールし、`live-support setup` を実行します。Chromeで補助拡張を再読み込みし、Meet限定のサイトアクセスを許可して、**Meetタブも参加前に再読み込み**してください。参加済みの接続を後から発見する保証はありません。拡張の保存先は同じです。
 
 ```bash
-npm uninstall --global tactiq-live-channel
+npm uninstall --global live-support
 ```
 
-アンインストールは `~/.tactiq-live-channel/` とChromeの読み込み登録を自動削除しません。不要なら全プロセス停止後に本人が確認して削除してください。
+アンインストールは `~/.live-support/` とChromeの読み込み登録を自動削除しません。不要なら全プロセス停止後に本人が確認して削除してください。
 
 ## 開発・資料
 
@@ -135,7 +135,7 @@ npm uninstall --global tactiq-live-channel
 ```bash
 npm ci --ignore-scripts
 npm test
-node bin/tactiq-live.js --help
+node bin/live-support.js --help
 ```
 
 - [使い方・CLI・データ形式・動作仕様：SPEC.md](SPEC.md)

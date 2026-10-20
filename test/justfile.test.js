@@ -8,22 +8,22 @@ import { tmpdir } from "node:os";
 const root = resolve("."), just = join(root, "justfile");
 const available = spawnSync("just", ["--version"], { encoding: "utf8" }).status === 0;
 async function fixture(t) {
-  const temp = await mkdtemp(join(tmpdir(), "tactiq-just-"));
+  const temp = await mkdtemp(join(tmpdir(), "live-support-just-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const bin = join(temp, "bin"), global = join(temp, "global packages"), runtime = join(temp, "runtime");
   await mkdir(bin); await mkdir(runtime);
   await writeFile(join(runtime, "keep"), "preserve user data");
   const record = join(temp, "commands.jsonl"), setup = join(temp, "setup.json");
-  const packageBin = join(global, "tactiq-live-channel/bin");
+  const packageBin = join(global, "live-support/bin");
   await mkdir(packageBin, { recursive: true });
-  await writeFile(join(packageBin, "tactiq-live.js"), 'require("node:fs").writeFileSync(process.env.JUST_SETUP,JSON.stringify(process.argv.slice(2)));');
+  await writeFile(join(packageBin, "live-support.js"), 'require("node:fs").writeFileSync(process.env.JUST_SETUP,JSON.stringify(process.argv.slice(2)));');
   const npm = join(bin, "npm");
   await writeFile(npm, "#!" + process.execPath + "\n" +
     'const fs=require("node:fs"),args=process.argv.slice(2);fs.appendFileSync(process.env.JUST_RECORD,JSON.stringify(args)+"\\n");' +
     'if(args[0]==="root")console.log(process.env.JUST_GLOBAL);if(args[0]==="install"&&process.env.JUST_FAIL)process.exit(7);\n');
   await chmod(npm, 0o755);
   await symlink(process.execPath, join(bin, "node"));
-  const env = { ...process.env, PATH: bin + ":" + process.env.PATH, JUST_RECORD: record, JUST_GLOBAL: global, JUST_SETUP: setup, TACTIQ_RUNTIME_DIR: runtime };
+  const env = { ...process.env, PATH: bin + ":" + process.env.PATH, JUST_RECORD: record, JUST_GLOBAL: global, JUST_SETUP: setup, LIVE_SUPPORT_RUNTIME_DIR: runtime };
   return {
     env, runtime, setup,
     run(recipe) { return spawnSync("just", ["--justfile", just, recipe], { cwd: temp, env, encoding: "utf8", timeout: 10000 }); },
@@ -49,7 +49,7 @@ test("failed just install does not run setup", { skip: !available }, async t => 
 test("just uninstall removes only the npm package and preserves runtime data", { skip: !available }, async t => {
   const f = await fixture(t), result = f.run("uninstall");
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(await f.calls(), [["uninstall", "--global", "tactiq-live-channel"]]);
+  assert.deepEqual(await f.calls(), [["uninstall", "--global", "live-support"]]);
   assert.equal(await readFile(join(f.runtime, "keep"), "utf8"), "preserve user data");
   await assert.rejects(readFile(f.setup, "utf8"));
 });

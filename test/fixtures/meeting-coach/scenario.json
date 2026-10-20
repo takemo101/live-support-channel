@@ -40,7 +40,7 @@
     },
     {
       "kind": "stop",
-      "actualUser": "/tactiq-live:meeting stop",
+      "actualUser": "/live-support:meeting stop",
       "expected": "助言停止を伝える。Chromeの転送は止まっていないと明示し、パネル停止を案内する。"
     }
   ]

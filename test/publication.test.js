@@ -5,7 +5,7 @@ import { isAbsolute } from "node:path";
 
 test("MCP launch configuration is portable from the repository root", async () => {
   const config = JSON.parse(await readFile(new URL("../mcp.local.json", import.meta.url), "utf8"));
-  const server = config.mcpServers["tactiq-live"];
+  const server = config.mcpServers["live-support"];
   assert.equal(server.command, "node");
   assert.deepEqual(server.args, ["server/main.js"]);
   assert.equal(isAbsolute(server.args[0]), false);

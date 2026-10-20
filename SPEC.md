@@ -6,7 +6,7 @@
 
 ## 1. 目的と範囲
 
-Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「要点・相手の問い・短い返答案・根拠付きの事業／技術の提案」を表示します。Tactiqは不要。CLI名 `tactiq-live`、channel名、保存先は互換性のため維持します。
+Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッションへ逐次渡します。プロジェクト資料を読取り専用で参照し、「要点・相手の問い・短い返答案・根拠付きの事業／技術の提案」を表示します。Tactiqは不要。CLI名 `live-support`、channel名、保存先は互換性のため維持します。
 
 実装範囲：
 
@@ -42,18 +42,18 @@ Channelsはresearch previewです。公式資料ではBedrock／GoogleのAgent P
 
 ```bash
 npm install --global --ignore-scripts github:takemo101/tactiq-live-channel
-tactiq-live setup
+live-support setup
 ```
 
-表示された拡張フォルダ（通常 `~/.tactiq-live-channel/extension`）を `chrome://extensions` のデベロッパーモードから手動で読み込みます。ChromeやClaudeのユーザー設定は自動変更しません。ビルド、Tactiq、REAは起動時依存ではありません。
+表示された拡張フォルダ（通常 `~/.live-support/extension`）を `chrome://extensions` のデベロッパーモードから手動で読み込みます。ChromeやClaudeのユーザー設定は自動変更しません。ビルド、Tactiq、REAは起動時依存ではありません。
 
 cloneした環境では `just install` で独立コピーのグローバル導入とsetup、`just uninstall` でCLIのみ削除できます。justfileはdotenvを読まず、install失敗時はsetupしません。
 
 ```bash
 cd /path/to/project
-tactiq-live claude
+live-support claude
 # 別ターミナル
-tactiq-live token
+live-support token
 ```
 
 tokenを公開しないでください。ランチャーはcwdを維持し、インストール先の絶対パスからその起動だけのMCP設定を作ります。プロジェクトへのファイル配置やグローバルSkill追加は不要です。起動直後から資料を読むため、先に非機密の参照範囲を選んでください。
@@ -64,9 +64,9 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 - `--restricted`、`--permission-mode manual`。bypassは使わず、managed設定が優先。
 - `--settings` でhooks、SkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories` とRead deny（.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先）を指定。
 - `--plugin-dir` と `--append-system-prompt-file` で同じ `skills/meeting/SKILL.md` をそのセッションだけに使用。初期ユーザー依頼で会議モードを開始。
-- `--dangerously-load-development-channels server:tactiq-live -- <開始依頼>`。可変長引数とpromptの間の `--` が必要。認証・権限・組織制限は迂回しない。
+- `--dangerously-load-development-channels server:live-support -- <開始依頼>`。可変長引数とpromptの間の `--` が必要。認証・権限・組織制限は迂回しない。
 
-ホーム／filesystem rootからの起動は拒否します。これはOSサンドボックスや全機密情報の検出ではありません。実Claudeでの拒否動作は受入確認が必要です。モデル環境変数は継承し、例は `ANTHROPIC_MODEL=haiku tactiq-live claude`。実Haikuの品質・速度・費用は未確認です。
+ホーム／filesystem rootからの起動は拒否します。これはOSサンドボックスや全機密情報の検出ではありません。実Claudeでの拒否動作は受入確認が必要です。モデル環境変数は継承し、例は `ANTHROPIC_MODEL=haiku live-support claude`。実Haikuの品質・速度・費用は未確認です。
 
 受信port使用中・別ランチャーのlockがある場合は二重起動を拒否。終了signalでは子の終了を待ってlockを解除します。直接 `server/main.js` を起動する開発用 `mcp.local.json` にはCLIの排他・起動ごとのtoken更新は適用されません。
 
@@ -104,8 +104,8 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 重要な変化に通常4／最大6行のカード。同じ相づちでは繰り返さず、途中は暫定、欠落は不明とする。資料は必要最小限読み、実在する根拠だけ示す。
 
-- /tactiq-live:meeting stop：助言停止。
-- /tactiq-live:meeting start：助言再開。
+- /live-support:meeting stop：助言停止。
+- /live-support:meeting start：助言再開。
 - **助言停止は転送停止ではない。字幕はChromeパネルで停止する。**
 
 プロジェクト切替はパネル停止 → 前のランチャー終了 → 次のprojectで起動 → 新tokenで再ペアリング。古いtokenは新しい受信先で認証されない。
@@ -201,9 +201,9 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 
 未知のwire type・重複field・不正UTF8・過大整数等は無理に文字列化せず停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
-保存先は ~/.tactiq-live-channel/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
+保存先は ~/.live-support/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 
-TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
+LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
 
 ## 8. 診断・更新
 
@@ -231,7 +231,7 @@ TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override�
 
 表示するのは既知コードと接続／字幕ch／受信／初回ID除外／採用の整数件数だけ。任意の例外details・生bytes・文字起こしは表示しない。会議URL、タイトル、本文、話者名、token、全DOM、HARを不具合報告へ貼らないこと。
 
-旧CAPTION_ROWS_NOT_FOUNDはv0.4のDOM方式。現在は字幕の子要素数に依存しない。更新は転送／ランチャー停止 → 再インストール → setup → 拡張再読込み・Meetサイトアクセス確認 → **Meetタブを参加前に再読み込み** → DevTools開き直し。削除はnpm uninstall --global tactiq-live-channel。ランタイムとChrome登録は自動削除しない。
+旧CAPTION_ROWS_NOT_FOUNDはv0.4のDOM方式。現在は字幕の子要素数に依存しない。更新は転送／ランチャー停止 → 再インストール → setup → 拡張再読込み・Meetサイトアクセス確認 → **Meetタブを参加前に再読み込み** → DevTools開き直し。削除はnpm uninstall --global live-support。ランタイムとChrome登録は自動削除しない。
 
 ## 9. 安全性と受入確認
 

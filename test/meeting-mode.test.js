@@ -14,9 +14,9 @@ async function launch(t, fromHome = false) {
   const record = join(temp, "args.json"), fake = join(bin, "claude");
   await writeFile(fake, "#!" + process.execPath + "\nrequire('node:fs').writeFileSync(process.env.MEETING_ARGS,JSON.stringify(process.argv.slice(2)));\n");
   await chmod(fake, 0o755);
-  const env = { ...process.env, PATH: bin, TACTIQ_PORT: "0", TACTIQ_RUNTIME_DIR: runtime, MEETING_ARGS: record };
+  const env = { ...process.env, PATH: bin, LIVE_SUPPORT_PORT: "0", LIVE_SUPPORT_RUNTIME_DIR: runtime, MEETING_ARGS: record };
   if (fromHome) env.HOME = project;
-  const result = spawnSync(process.execPath, [join(root, "bin/tactiq-live.js"), "claude"], { cwd: project, env, encoding: "utf8", timeout: 10000 });
+  const result = spawnSync(process.execPath, [join(root, "bin/live-support.js"), "claude"], { cwd: project, env, encoding: "utf8", timeout: 10000 });
   return { result, args: result.status === 0 ? JSON.parse(await readFile(record, "utf8")) : [], runtime, project };
 }
 test("launch enables only Skill and project read tools with session-local plugin", async t => {
@@ -36,7 +36,7 @@ test("startup prompt is separated from the variadic development-channel option",
   const channel = args.indexOf("--dangerously-load-development-channels");
   const separator = args.indexOf("--");
   assert.ok(separator > channel, "startup prompt needs -- to end the variadic channel list");
-  assert.deepEqual(args.slice(channel + 1, separator), ["server:tactiq-live"]);
+  assert.deepEqual(args.slice(channel + 1, separator), ["server:live-support"]);
   assert.equal(args.slice(separator + 1).length, 1);
   assert.match(args[separator + 1], /^会議サポートモードを開始してください/);
 });
@@ -69,7 +69,7 @@ test("plugin uses the repository-root skills directory and is included in npm fi
   assert.match(text, /^allowed-tools: Read, Glob, Grep$/m, "the skill stays read-only");
   assert.ok(text.includes("Chromeパネルの停止ボタン"), "ending advice must say the transport keeps running");
   const manifest = JSON.parse(await readFile(join(root, ".claude-plugin/plugin.json"), "utf8"));
-  assert.equal(manifest.name, "tactiq-live");
+  assert.equal(manifest.name, "live-support");
   assert.equal(manifest.hooks, undefined);
   assert.equal(manifest.mcpServers, undefined);
   const p = JSON.parse(await readFile(join(root, "package.json"), "utf8"));

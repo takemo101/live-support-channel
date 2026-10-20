@@ -7,9 +7,9 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 test("MCP stdin EOF closes the HTTP listener and process without a kill signal", { timeout: 8000 }, async t => {
-  const runtime = await mkdtemp(join(tmpdir(), "tactiq-eof-"));
+  const runtime = await mkdtemp(join(tmpdir(), "live-support-eof-"));
   const child = spawn(process.execPath, [resolve("server/main.js")], {
-    env: { TACTIQ_RUNTIME_DIR: runtime, TACTIQ_PORT: "0" }, stdio: ["pipe", "pipe", "pipe"],
+    env: { LIVE_SUPPORT_RUNTIME_DIR: runtime, LIVE_SUPPORT_PORT: "0" }, stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(async () => { if (child.exitCode === null) { child.kill(); await once(child, "exit"); } await rm(runtime, { recursive: true, force: true }); });
   let stderr = "", stdout = "";

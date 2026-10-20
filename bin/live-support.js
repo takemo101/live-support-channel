@@ -11,10 +11,10 @@ import { runtimeDirectory } from "../server/runtime.js";
 import { prepareToken } from "../server/token.js";
 
 const help = `Live Captions (Meet experimental) — one receiving Claude Code project at a time
-  tactiq-live setup    Install Chrome extension assets in your user directory
-  tactiq-live claude   Launch a meeting-enabled Claude Code in the current project
-  tactiq-live token    Print the pairing token locally (never share it)
-  tactiq-live --help   Show this help
+  live-support setup    Install Chrome extension assets in your user directory
+  live-support claude   Launch a meeting-enabled Claude Code in the current project
+  live-support token    Print the pairing token locally (never share it)
+  live-support --help   Show this help
 `;
 
 async function existing(path) {
@@ -44,7 +44,7 @@ async function renewToken(directory) {
   } finally { await rm(temp, { force: true }); }
 }
 async function requireFreePort() {
-  const port = Number(process.env.TACTIQ_PORT ?? 43821);
+  const port = Number(process.env.LIVE_SUPPORT_PORT ?? 43821);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid receiver port");
   const probe = createServer();
   await new Promise((accept, reject) => {
@@ -54,13 +54,13 @@ async function requireFreePort() {
 }
 async function main() {
   const [command = "--help", ...extra] = process.argv.slice(2);
-  if (extra.length || !["setup", "claude", "token", "--help", "-h"].includes(command)) throw new Error("Unknown command. Run tactiq-live --help.");
+  if (extra.length || !["setup", "claude", "token", "--help", "-h"].includes(command)) throw new Error("Unknown command. Run live-support --help.");
   if (command === "--help" || command === "-h") { console.log(help); return; }
   const directory = runtimeDirectory();
   if (command === "token") { console.log(await prepareToken(directory)); return; }
   if (command === "setup") {
     const extension = await setup(directory);
-    console.log("Chrome extension directory:\n" + extension + "\nLoad it once via chrome://extensions.\nRun tactiq-live claude from your project, then tactiq-live token for pairing.");
+    console.log("Chrome extension directory:\n" + extension + "\nLoad it once via chrome://extensions.\nRun live-support claude from your project, then live-support token for pairing.");
     return;
   }
   const lockPath = join(directory, "launcher.lock");
@@ -90,10 +90,10 @@ async function main() {
     checkCancellation();
     await renewToken(directory);
     checkCancellation();
-    const config = { mcpServers: { "tactiq-live": {
+    const config = { mcpServers: { "live-support": {
       command: process.execPath,
       args: [fileURLToPath(new URL("../server/main.js", import.meta.url))],
-      env: { TACTIQ_RUNTIME_DIR: directory },
+      env: { LIVE_SUPPORT_RUNTIME_DIR: directory },
     } } };
     const pluginRoot = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
     const skillPath = join(pluginRoot, "skills/meeting/SKILL.md");
@@ -112,14 +112,14 @@ async function main() {
       },
     };
     checkCancellation();
-    console.error("Tactiq Live project: " + project);
-    console.error("Meeting support: project read-only; pair with a fresh token from tactiq-live token.");
+    console.error("Live Support project: " + project);
+    console.error("Meeting support: project read-only; pair with a fresh token from live-support token.");
     child = spawn("claude", [
       "--mcp-config", JSON.stringify(config), "--strict-mcp-config",
       "--tools", "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
       "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
       "--append-system-prompt-file", skillPath,
-      "--dangerously-load-development-channels", "server:tactiq-live", "--",
+      "--dangerously-load-development-channels", "server:live-support", "--",
       "会議サポートモードを開始してください。まず本人の会議での表示名を確認し、このプロジェクトのCLAUDE.mdと必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、skillの書式（要点・相手の問い・返答案・提案）で、本人の発言を除き、字幕の不完全さに注意しながら日本語で短く更新してください。",
     ], { stdio: "inherit", env: process.env });
     try {
@@ -138,4 +138,4 @@ async function main() {
     }
   }
 }
-main().catch(error => { console.error("Tactiq Live: " + error.message); process.exitCode = 1; });
+main().catch(error => { console.error("Live Support: " + error.message); process.exitCode = 1; });

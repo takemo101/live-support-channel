@@ -37,5 +37,5 @@ test("leaving the DevTools panel signals a stop", async () => {
   assert.ok(callbackCalled);
   onShown({ Event, dispatchEvent(e) { event = e; } });
   onHidden();
-  assert.equal(event.type, "tactiq-panel-hidden");
+  assert.equal(event.type, "live-support-panel-hidden");
 });
