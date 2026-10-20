@@ -5,7 +5,8 @@
 | 取得対象 | 状態 |
 | --- | --- |
 | Google Meetブラウザ版 | 字幕DataChannel readerを実装。**試験版・実会議の互換性は未確認** |
-| Zoom／Teamsブラウザ版 | 未実装。診断表示で停止 |
+| Microsoft Teamsブラウザ版 | 字幕通信の**観測のみ**（Teams側でライブキャプションをONにする）。**試験版・実Teamsでの互換性は未確認** |
+| Zoomブラウザ版 | 未実装。診断表示で停止 |
 | デスクトップ版・音声録音・新規ASR | 対象外 |
 
 Node.js 22以上、Chrome 125以上、Channelsと `--restricted` に対応したClaude Codeが必要です（CLI確認版2.1.302／2.1.303）。検証環境はmacOSです。
@@ -23,7 +24,7 @@ tactiq-live setup
 
 `setup` が表示する拡張フォルダ（通常 `~/.tactiq-live-channel/extension`）を、Chromeの `chrome://extensions` → デベロッパーモード →「パッケージ化されていない拡張機能を読み込む」で**一度だけ**読み込みます。
 
-**v0.5からMeetだけのサイトアクセスが必要です。** `https://meet.google.com/*` に限り、MAIN worldの `document_start` でフックを準備します。Chromeではこのサイトのデータの「読み取りと変更」に相当します。準備中は本文を処理・保持・送信しません。Chromeへの権限許可・拡張読込みは本人操作で、ユーザー設定や組織ポリシーを自動変更しません。
+**サイトアクセスはMeetとTeamsだけです（Teamsはv0.6）。** `https://meet.google.com/*`、`https://teams.microsoft.com/*`、`https://teams.live.com/*`、`https://teams.cloud.microsoft/*` に限り、MAIN worldの `document_start` でフックを準備します。Chromeではこのサイトのデータの「読み取りと変更」に相当します。準備中は本文を処理・保持・送信しません。Chromeへの権限許可・拡張読込みは本人操作で、ユーザー設定や組織ポリシーを自動変更しません。
 
 ## ソースからインストール（just）
 

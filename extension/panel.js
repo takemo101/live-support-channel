@@ -4,7 +4,7 @@ import { CaptionStream } from "./stream.js";
 export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
-  let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false;
+  let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false, platform = "Google Meet";
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map();
   const status = message => { el("status").textContent = message; };
@@ -32,8 +32,8 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     CAPTION_REVISION_CONFLICT: "同じ修正番号で本文が異なるため停止しました。",
     CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
     CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
-    PLATFORM_NOT_IMPLEMENTED: "現在はMeet標準字幕の試験版です。Zoom／Teamsの取得処理は未実装です。",
-    UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle Meetです。",
+    PLATFORM_NOT_IMPLEMENTED: "現在の対応はGoogle MeetとTeamsの字幕通信（試験版）です。Zoomの取得処理は未実装です。",
+    UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle MeetとTeamsです。",
     UNSUPPORTED_FRAME: "会議のメインフレーム以外は取得しません。",
     NOT_MEETING_PAGE: "Meet会議のページを開いてください。",
     MEETING_CHANGED: "会議ページが変わったため停止しました。",
@@ -115,14 +115,16 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
         const option = document.createElement("option"); option.value = meeting.id; option.textContent = meeting.title; el("meeting").append(option);
       }
       captionReady = result.captionReady === true && result.code === "READY";
-      if (captionReady) el("meeting").value = result.meetings[0].id;
-      status(captionReady ? "準備OKです。トークンを入力し、同意にチェックして「転送開始」を押してください。" : describe(result));
+      if (captionReady) { el("meeting").value = result.meetings[0].id; platform = result.platform === "Teams" ? "Teams" : "Google Meet"; }
+      status(!captionReady ? describe(result) : platform === "Teams"
+        ? "準備OK（Teams）。Teamsのライブキャプション（字幕）をONにしてから、トークンを入力し、同意にチェックして「転送開始」を押してください。字幕がOFFの間は何も届きません。"
+        : "準備OKです。トークンを入力し、同意にチェックして「転送開始」を押してください。");
     } catch (error) { if (run === generation) status(describe(error)); }
     finally { if (run === generation) controls(); }
   }
   function remember(snapshot) {
     if (snapshot.meetingId !== meetingId) throw Object.assign(Error("MEETING_CHANGED"), { code: "MEETING_CHANGED" });
-    if (!Array.isArray(snapshot.blocks) || snapshot.platform !== "Google Meet") throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
+    if (!Array.isArray(snapshot.blocks) || snapshot.platform !== platform) throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
     for (const block of snapshot.blocks) {
       if (!block || typeof block.messageId !== "string" || typeof block.transcript !== "string") throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
       captured.set(JSON.stringify([block.messageId, block.deviceId ?? ""]), block);

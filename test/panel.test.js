@@ -23,7 +23,7 @@ function setup(t, fetcher, storage) {
     if (fixture.respond) { const result = fixture.respond(params, done); if (result) { done(result, {}); return; } if (result === null) return; }
     if (params.action === "read" && fixture.deferRead) { fixture.pendingRead = done; return; }
     if (params.action === "reset") { done({ status: "idle" }); return; }
-    if (params.action === "discover") done({ status: "ready", meetings: [{ id: fixture.snapshot.meetingId, title: "Google Meet（標準字幕・試験版）" }], captionReady: fixture.captionReady, code: fixture.discoveryCode ?? (fixture.captionReady ? "READY" : "CAPTIONS_OFF"), diagnostics: fixture.diagnostics ?? { peers: 1, captionChannels: 1, received: 0, accepted: 0, baselineExcluded: 0 } }, {});
+    if (params.action === "discover") done({ status: "ready", ...(fixture.platform ? { platform: fixture.platform } : {}), meetings: [{ id: fixture.snapshot.meetingId, title: "Google Meet（標準字幕・試験版）" }], captionReady: fixture.captionReady, code: fixture.discoveryCode ?? (fixture.captionReady ? "READY" : "CAPTIONS_OFF"), diagnostics: fixture.diagnostics ?? { peers: 1, captionChannels: 1, received: 0, accepted: 0, baselineExcluded: 0 } }, {});
     else done(JSON.parse(JSON.stringify(fixture.snapshot)), {});
   } };
   const onNavigated = { addListener(fn) { navigation.add(fn); }, removeListener(fn) { navigation.delete(fn); } };
@@ -376,4 +376,18 @@ test("assisted refusals are explained and stop a capture", async t => {
     s.elements.refresh.click(); await turn();
     assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
   }
+});
+
+test("a Teams capture is discovered, explained, and sent as Teams", async t => {
+  const s = setup(t); s.fixture.platform = "Teams"; s.fixture.snapshot.platform = "Teams"; s.fixture.snapshot.meetingId = "teams.microsoft.com/call";
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /Teams/); assert.match(s.elements.status.textContent, /ライブキャプション/);
+  await start(s); fresh(s, "fresh", "teams words"); await s.poll();
+  assert.equal(JSON.parse(posts(s)[0].options.body).platform, "Teams");
+  assert.equal(JSON.parse(posts(s)[0].options.body).meetingId, "teams.microsoft.com/call");
+});
+test("a snapshot from a different platform than the discovered one stops the capture", async t => {
+  const s = setup(t); s.fixture.platform = "Teams"; s.fixture.snapshot.meetingId = "teams.microsoft.com/call";
+  await start(s); assert.equal(s.elements.stop.disabled, true); assert.match(s.elements.status.textContent, /READ_FAILED/);
+  assert.equal(posts(s).length, 0);
 });

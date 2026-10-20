@@ -13,7 +13,7 @@
       <h1>Live Captions → Claude Code</h1>
       <span id="state" class="state idle">未準備</span>
     </header>
-    <p id="status" role="status" aria-live="polite">Meetの字幕がONの会議タブで、このパネルを開いたまま使います（字幕OFFでの開始は下の実験オプション）。</p>
+    <p id="status" role="status" aria-live="polite">字幕（Meetの字幕／Teamsのライブキャプション）がONの会議タブで、このパネルを開いたまま使います。</p>
     <section id="setup">
       <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
       <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値">
@@ -23,7 +23,7 @@
         <button id="refresh" type="button">再確認</button>
       </div>
       <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱いを確認しました</label>
-      <label class="consent"><input id="assist" type="checkbox">実験：Meetの字幕ボタンがOFFでも開始する（Meetの字幕設定を1回だけ書き込みます。既定OFF・再試行なし）</label>
+      <label class="consent"><input id="assist" type="checkbox">実験（Meetのみ）：字幕ボタンがOFFでも開始する（Meetの字幕設定を1回だけ書き込みます。既定OFF・再試行なし）</label>
     </section>
     <div class="actions">
       <button id="start" class="primary" type="button" disabled>転送開始</button>
@@ -33,13 +33,13 @@
     <details>
       <summary>仕組みと注意事項</summary>
       <ul>
-        <li>Meetの字幕通信を約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
-        <li>会議参加前に拡張を準備してください。更新時はMeetタブを再読み込みして参加し、Meetの字幕をONにします。</li>
-        <li>転送した字幕はClaude Codeを通じてAnthropicへ送信されます。同意後だけ本文を処理し、必要時は既存のMeet接続に自分の字幕チャネルを追加して受信確認を返します。</li>
+        <li>MeetとTeamsの字幕通信を約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
+        <li>会議参加前に拡張を準備してください。更新時は会議タブを再読み込みして参加し、Meetは字幕、Teamsはライブキャプションをユーザーが開始します。Teamsは観測のみで、字幕の開始・購読・送信はしません。</li>
+        <li>転送した字幕はClaude Codeを通じてAnthropicへ送信されます。同意後だけ本文を処理し、Meetでは必要時に既存の会議接続へ自分の字幕チャネルを追加して受信確認を返します。</li>
         <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。氏名は取得せず「話者1（名前未確認）」等で識別します。</li>
         <li>読取りが約2秒途切れても自動で復旧しますが、途切れた間の字幕は取得できません。手動で停止・一時停止した後は自動再開しません。</li>
         <li>一時停止で未処理分は破棄し、新しい字幕は処理・保持・送信しません。送信済みのデータは取り消せません。</li>
-        <li>実会議での互換性は未確認です。Zoom／Teamsの取得処理は未実装です。このパネルを離れると停止します。</li>
+        <li>実会議での互換性は未確認です。Zoomの取得処理は未実装です。このパネルを離れると停止します。</li>
       </ul>
     </details>
   </main>

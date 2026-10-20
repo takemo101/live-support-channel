@@ -18,7 +18,7 @@ test("no foreign extension context or Tactiq store access remains", () => {
   assert.ok(!readCaptions.toString().includes("chrome-extension://"));
   assert.ok(!readCaptions.toString().includes("window.tactiq"));
 });
-for (const host of ["app.zoom.us", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]) {
+for (const host of ["app.zoom.us", "us02web.zoom.us"]) {
   test("unimplemented platform fails before reading DOM: " + host, () => {
     assert.equal(inspect({ action: "discover" }, { host }).code, "PLATFORM_NOT_IMPLEMENTED");
   });
@@ -54,4 +54,18 @@ test("recover forwards only the new and previous owner IDs with the verified mee
   inspect({ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", assistCaptions: true, extra: "x" }, { api });
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", assistCaptions: true }]);
   assert.equal(inspect({ action: "recover", meetingId: "other", captureId: "new", previousCaptureId: "old" }, { api }).code, "MEETING_CHANGED");
+});
+
+for (const host of ["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]) test("Teams is read only through the prepared hook, bound to its host: " + host, () => {
+  const calls = [], api = { version: 1, command(params) { calls.push(params); return { status: "ready", captionReady: true, code: "READY" }; } };
+  const options = { host, path: "/v2/", api };
+  assert.equal(inspect({ action: "discover" }, options).code, "READY");
+  assert.equal(calls[0].meetingId, host + "/call");
+  assert.equal(inspect({ action: "read", meetingId: host + "/call", captureId: "c" }, options).status, "ready");
+  assert.equal(inspect({ action: "read", meetingId: "meet.google.com/abc-defg-hij", captureId: "c" }, options).code, "MEETING_CHANGED");
+  assert.equal(inspect({ action: "discover" }, { ...options, framed: true }).code, "UNSUPPORTED_FRAME");
+  assert.equal(calls.length, 2);
+});
+test("Teams lookalike hosts and non-https stay unsupported", () => {
+  for (const host of ["teams.microsoft.com.evil.example", "evilteams.live.com", "teams.cloud.microsoft.evil.example"]) assert.equal(inspect({ action: "discover" }, { host, path: "/v2/" }).code, "UNSUPPORTED_HOST");
 });
