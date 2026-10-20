@@ -400,25 +400,16 @@ test("a Zoom capture is discovered, explained, and sent as Zoom", async t => {
   assert.equal(JSON.parse(posts(s)[0].options.body).platform, "Zoom");
 });
 test("Zoom frame and unsupported-host refusals are explained", async t => {
-  for (const code of ["ZOOM_FRAME_NOT_FOUND", "PLATFORM_NOT_IMPLEMENTED"]) {
+  for (const code of ["ZOOM_FRAME_NOT_FOUND", "TEAMS_CAPTIONS_NOT_FOUND", "PLATFORM_NOT_IMPLEMENTED"]) {
     const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = code;
     s.elements.refresh.click(); await turn();
     assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
   }
 });
-test("diagnostic counters and sanitized channel labels are shown, nothing else", async t => {
+test("diagnostic counters and sanitized UI hook names are shown, nothing else", async t => {
   const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
-  s.fixture.diagnostics = { peers: 1, frames: 4, channelLabels: ["main-channel", "bad label<x>", "collections", 7], secret: "PRIVATE" };
+  s.fixture.diagnostics = { peers: 0, rows: 0, unmatched: 3, tids: ["closed-caption-renderer-wrapper", "bad tid<x>", "closed-caption-text", 7], secret: "PRIVATE" };
   s.elements.refresh.click(); await turn();
-  assert.match(s.elements.status.textContent, /フレーム=4/); assert.match(s.elements.status.textContent, /main-channel,collections/);
-  assert.ok(!s.elements.status.textContent.includes("bad label") && !s.elements.status.textContent.includes("PRIVATE"));
-});
-test("rejection reason and item field names are shown only when they match the fixed vocabulary", async t => {
-  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
-  s.fixture.diagnostics = { peers: 1, reason: "ts:unsafe-integer", itemKeys: ["id", "userId", "bad key<x>", "text", 3], secret: "PRIVATE" };
-  s.elements.refresh.click(); await turn();
-  assert.match(s.elements.status.textContent, /理由=ts:unsafe-integer/); assert.match(s.elements.status.textContent, /項目=id,userId,text/);
-  assert.ok(!s.elements.status.textContent.includes("bad key") && !s.elements.status.textContent.includes("PRIVATE"));
-  s.fixture.diagnostics = { reason: "ts: <script>PRIVATE" }; s.elements.refresh.click(); await turn();
-  assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("理由="));
+  assert.match(s.elements.status.textContent, /構造不明=3/); assert.match(s.elements.status.textContent, /data-tid=closed-caption-renderer-wrapper,closed-caption-text/);
+  assert.ok(!s.elements.status.textContent.includes("bad tid") && !s.elements.status.textContent.includes("PRIVATE"));
 });

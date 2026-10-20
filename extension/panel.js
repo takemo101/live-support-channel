@@ -33,6 +33,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
     CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
     PLATFORM_NOT_IMPLEMENTED: "ZoomはWebクライアント（app.zoom.us）だけに対応しています。ブラウザ版で参加してください。",
+    TEAMS_CAPTIONS_NOT_FOUND: "Teamsのライブキャプションが表示されていません。会議に参加し、Teams側でライブキャプションをONにして字幕を表示してから「再確認」してください。",
     ZOOM_FRAME_NOT_FOUND: "Zoomの会議画面がまだ開かれていません。会議に参加し、字幕を表示してから「再確認」してください。",
     UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle Meet、Teams、Zoom（Webクライアント）です。",
     UNSUPPORTED_FRAME: "会議のメインフレーム以外は取得しません。",
@@ -45,13 +46,12 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
   };
   function statistics(d) {
-    const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["frames", "フレーム"], ["nonBinary", "非バイナリ"], ["noJson", "JSONなし"], ["nonCaption", "字幕以外"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
+    const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["rows", "字幕行"], ["unmatched", "構造不明"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
       .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
       .map(([key, label]) => `${label}=${d[key]}`);
-    const labels = Array.isArray(d?.channelLabels) ? d.channelLabels.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,32}$/.test(l)).slice(0, 8) : [];
-    const reason = typeof d?.reason === "string" && /^[a-z]{1,8}:[a-z-]{1,24}$/.test(d.reason) ? [`理由=${d.reason}`] : [];
-    const keys = Array.isArray(d?.itemKeys) ? d.itemKeys.filter(k => typeof k === "string" && /^[A-Za-z0-9_]{1,24}$/.test(k)).slice(0, 16) : [];
-    return [...counts, ...reason, ...(keys.length ? [`項目=${keys.join(",")}`] : []), ...(labels.length ? [`ラベル=${labels.join(",")}`] : [])].join("／");
+    // UI hook names only (never caption text); they show which part of a changed Teams layout is missing.
+    const tids = Array.isArray(d?.tids) ? d.tids.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,48}$/.test(l)).slice(0, 12) : [];
+    return [...counts, ...(tids.length ? [`data-tid=${tids.join(",")}`] : [])].join("／");
   }
   function describe(result) {
     const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";
@@ -122,7 +122,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       captionReady = result.captionReady === true && result.code === "READY";
       if (captionReady) { el("meeting").value = result.meetings[0].id; platform = ["Teams", "Zoom"].includes(result.platform) ? result.platform : "Google Meet"; }
       status(!captionReady ? describe(result) : platform === "Teams"
-        ? "準備OK（Teams）。Teamsのライブキャプション（字幕）をONにしてから、トークンを入力し、同意にチェックして「転送開始」を押してください。字幕がOFFの間は何も届きません。"
+        ? "準備OK（Teams）。画面に表示されているライブキャプションだけを読みます。トークンを入力し、同意にチェックして「転送開始」を押してください。字幕を消している間は何も届きません。"
         : platform === "Zoom"
         ? "準備OK（Zoom）。Zoomの字幕（ライブトランスクリプション）を画面に表示してから、トークンを入力し、同意にチェックして「転送開始」を押してください。画面に出ている字幕だけを読みます。"
         : "準備OKです。トークンを入力し、同意にチェックして「転送開始」を押してください。");
