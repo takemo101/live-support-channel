@@ -66,7 +66,8 @@ test("plugin uses the repository-root skills directory and is included in npm fi
   assert.match(text, /description: Use when/);
   assert.match(text, /disable-model-invocation: true/);
   assert.ok(!text.includes("context: fork"));
-  for (const label of ["今の話", "相手の問い", "返答案", "根拠", "未確認", "Chrome"]) assert.ok(text.includes(label), label);
+  assert.match(text, /^allowed-tools: Read, Glob, Grep$/m, "the skill stays read-only");
+  assert.ok(text.includes("Chromeパネルの停止ボタン"), "ending advice must say the transport keeps running");
   const manifest = JSON.parse(await readFile(join(root, ".claude-plugin/plugin.json"), "utf8"));
   assert.equal(manifest.name, "tactiq-live");
   assert.equal(manifest.hooks, undefined);
