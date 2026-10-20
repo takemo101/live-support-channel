@@ -1,6 +1,6 @@
 # Meet字幕通信reader：根拠・制限・診断
 
-対象：v0.5.0、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** Google Meet限定の試験版で、実会議・実Claudeは未確認。Zoom／Teamsの取得処理は未実装です。
+対象：v0.5.1、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** Google Meet限定の試験版で、実会議・実Claudeは未確認。Zoom／Teamsの取得処理は未実装です。
 
 ## 方式変更の経緯
 
@@ -57,6 +57,7 @@ MAIN worldはページと同じJS環境で、セキュリティsandboxではな�
 ## 停止・保持
 
 パネルは約1秒でsnapshotとleaseを更新し、約5秒で差分送信する。約2秒のleaseはframe受信前と非同期decode後にも確認する。期限切れ、pause／stop、ページ移動／pagehide、字幕OFF、未知形式等で本文とキューを破棄し、自分のチャネルを閉じる。
+lease失効だけは、パネルが新しい所有者でrecoverを呼んで同じ会議へ自動復旧する。フックは直前の終了がCAPTURE_EXPIREDで旧所有者・会議が一致し、現在のcaptureが無い場合だけ許可する（他の終了理由・手動reset・他captureは拒否）。復旧しても失効中の字幕は取得できず、初回ID除外と話者番号の振り直しが再度起こる。
 
 未処理payloadはsessionの可変キューから即時解放する。実行中gzip readerはcancelを要求する。取消できないBlob変換等は最大1件までで、その終了まで新captureを拒否する。待機中も古い結果をdecode・転送しない。
 

@@ -1,6 +1,6 @@
 # Live Captions → Claude Code：使い方と仕様
 
-バージョン：0.5.0。最終更新：2026-10-20。
+バージョン：0.5.1。最終更新：2026-10-20。
 
 > **Meet字幕通信の試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire、実HTTP／MCP通知を検証。実Meet／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Zoom／Teams取得は未実装です。
 
@@ -75,7 +75,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 1. 参加者同意、組織規程、Anthropic側のデータ取扱いを確認する。
 2. **会議参加前**に拡張を読み込み、Meetだけのサイトアクセスを本人が許可する。更新時はMeetタブを再読み込みしてから参加する。
 3. Meet内の標準字幕をONにする。Chrome全体の自動字幕ではない。
-4. そのタブのDevTools → **Live Captions**。「Meet字幕通信の準備を確認」→ token入力・会議選択 → 同意 → 転送開始。
+4. そのタブのDevTools → **Live Captions**。パネルを開くと準備を自動確認し、会議は1件なら自動選択する。token入力 → 同意 → 転送開始（tokenは受信サーバーが受理した後、ブラウザ終了まで `chrome.storage.session` に記憶。「再確認」で再検査）。
 5. パネルを表示したまま使う。起動直後から参照するプロジェクトも非機密の範囲を選ぶ。
 
 準備中・確認操作はURL、字幕ボタン、接続／チャネルの状態・件数だけを扱い、字幕本文や会議タイトルは読まない。認証済み /health と同意の確認後に取得を開始する。接続が複数で特定できない場合は開始しない。
@@ -96,6 +96,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 - **Tactiqのpauseとは連動しない。** Tactiqを止めても本readerは止まらない。
 - 停止、pagehide、ページ移動、字幕OFF、未知形式、順序／修正の矛盾、チャネル終了、上限、HTTP4xxで停止。自動再購読しない。
 - パネルは約1秒でheartbeatを送り、約2秒のleaseが切れたら本文を破棄して自分のチャネルを閉じる。元のアプリのチャネル・PeerConnectionは閉じない。
+- **lease失効（CAPTURE_EXPIRED）だけは同じ会議へ自動復旧する。** パネルが新しいcapture所有者でrecoverを呼び、フックは「現在のcaptureが無く、直前の終了がCAPTURE_EXPIREDで、旧所有者・会議が一致」する場合だけ新規購読を許可する。手動の停止・一時停止・字幕OFF・会議変更・他のcapture・他の終了理由は復旧せず停止する。CAPTION_DECODE_BUSYだけは次の約1秒周期で最大10回再試行し、超えたら停止。送信系列・未確認バッチ・蓄積は維持するが、**失効中の字幕、復旧後の各話者の初回ID以前は欠落し、話者番号は振り直される**（状態表示に回数を出す）。MAINは今も約2秒で安全停止するため、無欠落の取得ではない。
 - Main worldとDevToolsは非同期なので、停止指示の到達前や発行済み処理は即時取消できない。各frameと非同期decode後にも所有者・leaseを確認し、失効した結果を送らない。
 - 受信サーバーはstdin EOF／SIGINT／SIGTERMで閉じる。送信済み情報を消す機能はない。
 
@@ -192,7 +193,7 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 
 未知のwire type・重複field・不正UTF8・過大整数等は無理に文字列化せず停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
-保存先は ~/.tactiq-live-channel/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザ永続storageには残さない。tokenはMAIN worldへ渡さない。
+保存先は ~/.tactiq-live-channel/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 
 TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override。**パネルとCSPは43821固定**。MCP設定へtokenを埋め込まない。
 
@@ -209,7 +210,7 @@ TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override�
 | CAPTION_FORMAT_UNKNOWN | 未対応wire。本文／生パケットを共有せずコードと件数を報告 |
 | CAPTION_DECODE_BUSY | 前の取消不能読取りの終了待ち。待って再確認、止まる場合は非機密テストでページ再読み込み |
 | CAPTION_ACK_BACKLOG_LIMIT | 自分のACK出力上限。自分の購読だけ閉じて停止、通信状態を確認 |
-| CAPTURE_EXPIRED | heartbeat途絶で破棄。表示を維持して再確認・開始 |
+| CAPTURE_EXPIRED | heartbeat途絶で破棄。同じ会議へ自動復旧（欠落あり）。復旧が拒否されれば停止 |
 | CAPTION_CHANNEL_CLOSED／RTC_CONNECTION_CLOSED | 接続終了。自動では再購読しない |
 | CAPTION_SEQUENCE_UNKNOWN／CAPTION_REVISION_CONFLICT | IDや修正の同一性が不明のため停止 |
 | CAPTION_LIMIT／CAPTION_BACKLOG_LIMIT／CAPTURE_BUFFER_LIMIT | 無言で削らず停止。非機密fixtureで確認 |
@@ -224,7 +225,7 @@ TACTIQ_RUNTIME_DIRは保存先、TACTIQ_PORTはserver portの開発用override�
 
 ## 9. 安全性と受入確認
 
-追加アクセスはcontent_scripts.matchesの **https://meet.google.com/** だけ。実装前に本人がMeetサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。storage／tabs／scripting／debugger／全サイト／音声権限は追加しない。
+追加アクセスはcontent_scripts.matchesの **https://meet.google.com/** だけ。実装前に本人がMeetサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。拡張APIの権限は `storage`（パネルがtokenを`chrome.storage.session`へ記憶するためだけ。UI改善依頼で追加、実Chrome未検証）のみ。tabs／scripting／debugger／全サイト／音声権限は追加しない。
 
 MAIN worldはページと同じJS環境で、OS／ページ隔離のsandboxではない。transport tokenは拡張パネルにのみ保持する。字幕・話者情報は非信頼データとして扱い、命令・ツール権限承認には使わない。自作channelの停止は元の会議接続を停止しない。
 

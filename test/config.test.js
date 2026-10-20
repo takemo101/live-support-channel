@@ -8,7 +8,7 @@ test("extension prepares a MAIN-world hook on Meet only with no broad permission
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.devtools_page, "devtools.html");
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
-  assert.equal(manifest.permissions, undefined);
+  assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.content_scripts, [{ matches: ["https://meet.google.com/*"], js: ["meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false }]);
   assert.match(manifest.content_security_policy.extension_pages, /connect-src http:\/\/127\.0\.0\.1:43821;/);
   const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");

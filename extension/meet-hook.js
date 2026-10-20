@@ -274,7 +274,7 @@
       meetings: id ? [{ id, title: "Google Meet（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
       diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, profile: current?.selected?.label ?? "pending" } };
   }
-  function command({ action = "discover", meetingId, captureId } = {}) {
+  function command({ action = "discover", meetingId, captureId, previousCaptureId } = {}) {
     if (action === "reset") {
       if (current?.owner === captureId) {
         const retired = finish("CAPTURE_RESET"); if (generation === retired) terminal = null;
@@ -285,7 +285,10 @@
     if (action === "discover") return metadata();
     if (!currentMeeting() || currentMeeting() !== meetingId) return { status: "ended", code: "MEETING_CHANGED" };
     if (typeof captureId !== "string" || !captureId.length || captureId.length > 128) return { status: "unavailable", code: "INVALID_CAPTURE" };
-    if (action === "start") {
+    // Recovery only continues the same meeting after its own lease lapsed; any other end state needs a user action.
+    if (action === "recover" && (current || terminal?.code !== "CAPTURE_EXPIRED" || terminal.meetingId !== meetingId
+      || typeof previousCaptureId !== "string" || terminal.owner !== previousCaptureId || previousCaptureId === captureId)) return { status: "ended", code: "CAPTURE_CHANGED" };
+    if (action === "start" || action === "recover") {
       const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
       const retired = finish("CAPTURE_REPLACED");
       if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
@@ -319,7 +322,7 @@
     }
     if (!current || current.owner !== captureId) return { status: "ended", code: terminal?.owner === captureId ? terminal.code : "CAPTURE_CHANGED",
       diagnostics: terminal?.owner === captureId ? { ...terminal.stats } : undefined };
-    if (action !== "start" && action !== "read") return { status: "unavailable", code: "INVALID_CAPTURE" };
+    if (action !== "start" && action !== "recover" && action !== "read") return { status: "unavailable", code: "INVALID_CAPTURE" };
     const s = current; if (!valid(s)) return { status: "ended", code: terminal?.code ?? "CAPTURE_CHANGED", diagnostics: { ...terminal?.stats } };
     renew(s);
     return { status: "live", meetingId, platform: "Google Meet", blocks: [...s.records.values()].flatMap(r => r.block ? [{ ...r.block }] : []), diagnostics: { ...s.stats } };

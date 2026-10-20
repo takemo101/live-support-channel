@@ -8,8 +8,8 @@ class Element extends EventTarget {
   replaceChildren(...children) { this.children = children; this.value = ""; }
   click() { if (!this.disabled) this.dispatchEvent(new Event("click")); }
 }
-function setup(t, fetcher) {
-  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent"].map(id => [id, new Element()]));
+function setup(t, fetcher, storage) {
+  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup"].map(id => [id, new Element()]));
   elements.token.value = "t".repeat(43); elements.consent.checked = true;
   const block = { messageId: "m", messageVersion: 1, speakerName: "Demo", transcript: "private baseline", timestamp: 100, version: 1 };
   const fixture = { captionReady: true, error: undefined, snapshot: { status: "live", meetingId: "meet.google.com/abc-defg-hij", platform: "Google Meet", blocks: [block] } };
@@ -20,6 +20,7 @@ function setup(t, fetcher) {
     const params = JSON.parse(expression.slice(expression.lastIndexOf("})(") + 3, -1));
     actions.push(params);
     if (fixture.error) { done(undefined, fixture.error); return; }
+    if (fixture.respond) { const result = fixture.respond(params, done); if (result) { done(result, {}); return; } if (result === null) return; }
     if (params.action === "read" && fixture.deferRead) { fixture.pendingRead = done; return; }
     if (params.action === "reset") { done({ status: "idle" }); return; }
     if (params.action === "discover") done({ status: "ready", meetings: [{ id: fixture.snapshot.meetingId, title: "Google Meet（標準字幕・試験版）" }], captionReady: fixture.captionReady, code: fixture.discoveryCode ?? (fixture.captionReady ? "READY" : "CAPTIONS_OFF"), diagnostics: fixture.diagnostics ?? { peers: 1, captionChannels: 1, received: 0, accepted: 0, baselineExcluded: 0 } }, {});
@@ -29,7 +30,7 @@ function setup(t, fetcher) {
   const panel = createPanel({
     document: { getElementById: id => elements[id], createElement: () => new Element() }, inspectedWindow, onNavigated,
     fetch: async (url, options) => { calls.push({ url, options }); return fetcher ? fetcher(url, options) : { ok: true, status: 202 }; },
-    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); },
+    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage,
   });
   t.after(() => panel.dispose());
   return { elements, block, fixture, calls, contexts, actions, navigation,
@@ -225,4 +226,134 @@ test("authorization failure stops instead of retrying forever", async t => {
   assert.match(s.elements.status.textContent, /401/);
   assert.equal(s.elements.start.disabled, false);
   assert.ok(!s.elements.status.textContent.includes("t".repeat(43)));
+});
+const expired = { status: "ended", code: "CAPTURE_EXPIRED" };
+const recovers = s => s.actions.filter(a => a.action === "recover");
+const resetting = (s, id) => s.actions.some(a => a.action === "reset" && a.captureId === id);
+test("lease expiry recovers the same meeting automatically and continues one series", async t => {
+  const s = setup(t); await start(s);
+  const first = s.actions.find(a => a.action === "start").captureId;
+  fresh(s, "before", "sent before expiry"); await s.poll();
+  let lapsed = true;
+  s.fixture.respond = p => {
+    if (p.action === "read" && lapsed) { lapsed = false; return expired; }
+    if (p.action === "recover") return { ...s.fixture.snapshot, blocks: [] };
+  };
+  await s.capture();
+  assert.equal(s.elements.stop.disabled, false); assert.equal(s.elements.pause.disabled, false);
+  assert.doesNotMatch(s.elements.status.textContent, /停止/);
+  const [recovery] = recovers(s); assert.equal(recovers(s).length, 1);
+  assert.notEqual(recovery.captureId, first); assert.equal(recovery.previousCaptureId, first);
+  assert.equal(recovery.meetingId, s.fixture.snapshot.meetingId);
+  s.fixture.snapshot.blocks = [{ ...s.block, messageId: recovery.captureId + ":1", transcript: "after recovery", version: 2 }];
+  await s.poll();
+  assert.equal(s.actions.at(-1).captureId, recovery.captureId);
+  assert.equal(posts(s).length, 2);
+  const [one, two] = posts(s).map(c => JSON.parse(c.options.body));
+  assert.equal(two.sessionId, one.sessionId); assert.equal(two.sequence, 2);
+  assert.deepEqual(two.updates.map(b => b.transcript), ["after recovery"]);
+});
+test("recovery keeps an unacknowledged batch for exact retry", async t => {
+  let fail = true;
+  const s = setup(t, (url, options) => options.method === "POST" && fail ? ({ ok: false, status: 503 }) : { ok: true, status: 202 });
+  await start(s); fresh(s, "before", "unacknowledged"); await s.poll();
+  assert.equal(posts(s).length, 1);
+  let lapsed = true;
+  s.fixture.respond = p => {
+    if (p.action === "read" && lapsed) { lapsed = false; return expired; }
+    if (p.action === "recover") return { ...s.fixture.snapshot, blocks: [] };
+  };
+  await s.capture(); fail = false; await s.poll();
+  assert.equal(posts(s).length, 2); assert.equal(posts(s)[1].options.body, posts(s)[0].options.body);
+});
+test("a refused recovery stops once instead of looping", async t => {
+  const s = setup(t); await start(s);
+  s.fixture.respond = p => p.action === "read" ? expired : p.action === "recover" ? { status: "ended", code: "CAPTURE_CHANGED" } : undefined;
+  await s.capture(); await s.capture();
+  assert.equal(recovers(s).length, 1); assert.equal(s.elements.stop.disabled, true);
+  assert.match(s.elements.status.textContent, /CAPTURE_CHANGED/);
+});
+test("only lease expiry is recoverable", async t => {
+  const s = setup(t); await start(s);
+  s.fixture.snapshot = { status: "unavailable", code: "CAPTIONS_OFF" }; await s.poll();
+  assert.equal(recovers(s).length, 0); assert.equal(s.elements.stop.disabled, true);
+});
+test("decoder drain delays recovery without a manual restart or status overwrite", async t => {
+  const s = setup(t); await start(s);
+  let busy = 2;
+  s.fixture.respond = p => {
+    if (p.action === "read") return expired;
+    if (p.action === "recover") return busy-- > 0 ? { status: "unavailable", code: "CAPTION_DECODE_BUSY" } : { ...s.fixture.snapshot, blocks: [] };
+  };
+  await s.capture(); assert.equal(s.elements.stop.disabled, false);
+  const note = s.elements.status.textContent; await s.flush(); assert.equal(s.elements.status.textContent, note);
+  assert.equal(posts(s).length, 0);
+  await s.capture(); await s.capture();
+  const ids = new Set(recovers(s).map(a => a.captureId)), previous = new Set(recovers(s).map(a => a.previousCaptureId));
+  assert.equal(recovers(s).length, 3); assert.equal(ids.size, 1); assert.equal(previous.size, 1);
+  assert.equal(s.elements.stop.disabled, false); assert.doesNotMatch(s.elements.status.textContent, /停止/);
+  assert.equal(s.actions.filter(a => a.action === "read").length, 1);
+});
+test("a decoder that never drains eventually stops with its reason", async t => {
+  const s = setup(t); await start(s);
+  s.fixture.respond = p => p.action === "read" ? expired : p.action === "recover" ? { status: "unavailable", code: "CAPTION_DECODE_BUSY" } : undefined;
+  for (let i = 0; i < 40 && !s.elements.stop.disabled; i++) await s.capture();
+  assert.equal(s.elements.stop.disabled, true); assert.match(s.elements.status.textContent, /CAPTION_DECODE_BUSY/);
+});
+for (const interrupt of ["stop", "pause"]) {
+  test(`${interrupt} during recovery cannot be undone by the late response`, async t => {
+    const s = setup(t); await start(s);
+    let late;
+    s.fixture.respond = (p, done) => {
+      if (p.action === "read") return expired;
+      if (p.action === "recover") { late = done; return null; }
+    };
+    const pending = s.capture(); await turn();
+    const owner = recovers(s)[0].captureId;
+    s.elements[interrupt].click();
+    late({ ...s.fixture.snapshot, blocks: [] }, {}); await pending; await turn();
+    assert.ok(resetting(s, owner), "the not-yet-adopted capture must be released");
+    const count = s.actions.length; await s.poll(); assert.equal(s.actions.length, count);
+    if (interrupt === "stop") assert.equal(s.elements.stop.disabled, true);
+    else assert.match(s.elements.pause.textContent, /再開/);
+    assert.equal(posts(s).length, 0);
+  });
+}
+
+test("a single detected meeting is selected without a manual step", async t => {
+  const s = setup(t); s.elements.refresh.click(); await turn();
+  assert.equal(s.elements.meeting.value, s.fixture.snapshot.meetingId);
+  s.elements.consent.dispatchEvent(new Event("change")); assert.equal(s.elements.start.disabled, false);
+});
+test("state badge and visible controls follow the capture phases", async t => {
+  const s = setup(t); const view = () => [s.elements.state.textContent, s.elements.start.hidden, s.elements.pause.hidden, s.elements.stop.hidden, s.elements.setup.hidden];
+  assert.deepEqual(view(), ["未準備", false, true, true, false]);
+  s.elements.refresh.click(); await turn(); assert.equal(s.elements.state.textContent, "準備OK");
+  await start(s); assert.deepEqual(view(), ["取得中", true, false, false, true]);
+  s.elements.pause.click(); await turn(); assert.equal(s.elements.state.textContent, "一時停止中");
+  s.elements.pause.click(); await turn(); assert.equal(s.elements.state.textContent, "取得中");
+  s.fixture.respond = p => p.action === "read" ? expired : p.action === "recover" ? { status: "unavailable", code: "CAPTION_DECODE_BUSY" } : undefined;
+  await s.capture(); assert.equal(s.elements.state.textContent, "自動復旧中"); assert.match(s.elements.state.className, /working/);
+  s.elements.stop.click(); assert.equal(s.elements.state.textContent, "準備OK");
+  assert.match(s.elements.state.className, /ready/);
+});
+test("failure stops are marked as needing attention; a manual stop is not", async t => {
+  const s = setup(t); await start(s);
+  s.fixture.snapshot = { status: "unavailable", code: "CAPTIONS_OFF" }; await s.capture();
+  assert.equal(s.elements.state.textContent, "停止（要確認）"); assert.match(s.elements.state.className, /error/);
+});
+test("the pairing token is restored for the browser session and forgotten once the server rejects it", async t => {
+  const saved = { token: undefined };
+  const storage = { get: async () => saved.token, set: async token => { saved.token = token; }, remove: async () => { saved.token = undefined; } };
+  const first = setup(t, undefined, storage); await start(first);
+  assert.equal(saved.token, "t".repeat(43));
+  const second = setup(t, undefined, storage); second.elements.token.value = ""; await turn();
+  assert.equal(second.elements.token.value, "t".repeat(43));
+  const rejected = setup(t, () => ({ ok: false, status: 401 }), storage); await start(rejected);
+  assert.equal(saved.token, undefined);
+});
+test("a token is not stored before the local server accepted it", async t => {
+  const saved = { token: undefined };
+  const s = setup(t, () => ({ ok: false, status: 503 }), { get: async () => undefined, set: async token => { saved.token = token; }, remove: async () => {} });
+  await start(s); assert.equal(saved.token, undefined);
 });

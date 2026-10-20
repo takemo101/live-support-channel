@@ -49,3 +49,9 @@ test("adapter invokes only our prepared hook and returns metadata before start",
 test("reset is metadata-only even when navigation moved to an unsupported host", () => {
   assert.deepEqual(inspect({ action: "reset", captureId: "expired" }, { host: "evil.example" }), { status: "idle" });
 });
+test("recover forwards only the new and previous owner IDs with the verified meeting", () => {
+  const calls = [], api = { version: 1, command(params) { calls.push(params); return { status: "live" }; } };
+  inspect({ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old", extra: "x" }, { api });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ action: "recover", meetingId: "meet.google.com/abc-defg-hij", captureId: "new", previousCaptureId: "old" }]);
+  assert.equal(inspect({ action: "recover", meetingId: "other", captureId: "new", previousCaptureId: "old" }, { api }).code, "MEETING_CHANGED");
+});

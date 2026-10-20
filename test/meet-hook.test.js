@@ -316,3 +316,50 @@ for (const id of [0n, 1n << 63n, (1n << 64n) - 1n]) test("ID outside positive si
 for (const options of [{ host: "evil.example" }, { framed: true }]) test("no hook installation outside Meet main frame", t => {
   assert.equal(fixture(t, options).api, undefined);
 });
+const recover = (f, captureId, previousCaptureId, id = meetingId) => f.api.command({ action: "recover", meetingId: id, captureId, previousCaptureId });
+test("recover resumes the same meeting after lease expiry under a new owner and re-excludes first IDs", async t => {
+  const f = fixture(t); f.command("start", "old"); f.channel.message(packet(10, "before expiry")); await f.drain(); f.expire();
+  assert.equal(f.command("read", "old").code, "CAPTURE_EXPIRED");
+  assert.equal(recover(f, "new", "old").status, "live");
+  assert.equal(f.command("read", "old").code, "CAPTURE_CHANGED");
+  f.channel.message(packet(30, "first after recovery")); await f.drain();
+  assert.equal(f.command("read", "new").blocks.length, 0); assert.equal(f.command("read", "new").diagnostics.baselineExcluded, 1);
+  f.channel.message(packet(31, "second after recovery")); await f.drain();
+  const [block] = f.command("read", "new").blocks;
+  assert.equal(block.transcript, "second after recovery"); assert.ok(block.messageId.startsWith("new:"));
+  f.command("reset", "new");
+});
+test("recover is refused unless the previous owner's lease expired in this meeting", async t => {
+  const f = fixture(t);
+  for (const [name, arrange, previous, id] of [
+    ["live capture", () => f.command("start", "old"), "old"],
+    ["manual reset", () => { f.command("start", "old"); f.expire(); f.command("reset", "old"); }, "old"],
+    ["other owner", () => { f.command("start", "old"); f.expire(); }, "other"],
+    ["other meeting", () => { f.command("start", "old"); f.expire(); }, "old", "meet.google.com/xxx-yyyy-zzz"],
+    ["non-expiry stop", () => { f.command("start", "old"); f.button.getAttribute = () => "Turn on captions (c)"; f.command("read", "old"); f.button.getAttribute = () => "Turn off captions (c)"; }, "old"],
+    ["no previous owner", () => { f.command("start", "old"); f.expire(); }, undefined],
+  ]) {
+    f.command("reset", "old"); f.command("reset", "new"); arrange();
+    const result = recover(f, "new", previous, id);
+    assert.notEqual(result.status, "live", name);
+    assert.notEqual(f.command("read", "new").status, "live", name);
+    if (name === "live capture") assert.equal(f.command("read", "old").status, "live");
+  }
+  f.command("reset", "old");
+});
+test("a replacement capture cannot be taken over by a late recover of an expired owner", t => {
+  const f = fixture(t); f.command("start", "old"); f.expire(); f.command("start", "other");
+  assert.equal(recover(f, "new", "old").code, "CAPTURE_CHANGED");
+  assert.equal(f.command("read", "other").status, "live"); f.command("reset", "other");
+});
+test("recover during decoder drain waits without losing the expired terminal, then succeeds", async t => {
+  const f = fixture(t); f.command("start", "old"); let release;
+  class Delayed extends Blob { arrayBuffer() { return new Promise(r => { release = r; }); } }
+  const raw = packet(1, "in-flight only"); f.channel.message(new Delayed([raw])); await new Promise(r => setImmediate(r));
+  f.expire();
+  assert.equal(recover(f, "new", "old").code, "CAPTION_DECODE_BUSY");
+  assert.equal(f.command("read", "old").code, "CAPTURE_EXPIRED");
+  release(raw.buffer); await new Promise(r => setImmediate(r));
+  assert.equal(recover(f, "new", "old").status, "live"); assert.equal(f.command("read", "new").blocks.length, 0);
+  f.command("reset", "new");
+});
