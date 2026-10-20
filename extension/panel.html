@@ -9,23 +9,39 @@
 </head>
 <body>
   <main>
-    <h1>Live Captions → Claude Code</h1>
-    <p>Meetの字幕通信を、約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。このパネルを離れると停止します。</p>
-    <p class="notice">会議参加前に拡張を準備してください。更新時はMeetタブを再読み込みして参加し、標準字幕をONにします。実会議の互換性は未確認。Zoom／Teamsの取得処理は未実装です。</p>
-    <p class="notice">同意後だけ本文を処理し、必要時は既存Meet接続に自分の字幕チャネルを追加して受信確認を返します。転送字幕はClaude Codeを通じてAnthropicへ送信されます。Tactiqの一時停止とは連動しません。</p>
-    <label for="token">ペアリングトークン</label>
-    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値（保存しません）">
-    <button id="refresh" type="button">Meet字幕通信の準備を確認</button>
-    <label for="meeting">このタブの会議</label>
-    <select id="meeting"><option value="">標準字幕をONにして確認してください</option></select>
-    <label class="consent"><input id="consent" type="checkbox">標準字幕の独立取得、参加者同意・組織規程・送信先AIのデータ取扱いを確認しました</label>
+    <header>
+      <h1>Live Captions → Claude Code</h1>
+      <span id="state" class="state idle">未準備</span>
+    </header>
+    <p id="status" role="status" aria-live="polite">字幕（Meetの字幕／Teamsのライブキャプション／Zoomの字幕）がONの会議タブで、このパネルを開いたまま使います。</p>
+    <section id="setup">
+      <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="tactiq-live token の値">
+      <label for="meeting">会議</label>
+      <div class="row">
+        <select id="meeting"><option value="">未確認（再確認を押してください）</option></select>
+        <button id="refresh" type="button">再確認</button>
+      </div>
+      <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱いを確認しました</label>
+      <label class="consent"><input id="assist" type="checkbox">実験（Meetのみ）：字幕ボタンがOFFでも開始する（Meetの字幕設定を1回だけ書き込みます。既定OFF・再試行なし）</label>
+    </section>
     <div class="actions">
-      <button id="start" type="button" disabled>Claude Codeへ転送開始</button>
-      <button id="pause" type="button" disabled>一時停止</button>
-      <button id="stop" type="button" disabled>停止・未送信分を破棄</button>
+      <button id="start" class="primary" type="button" disabled>転送開始</button>
+      <button id="pause" type="button" disabled hidden>一時停止</button>
+      <button id="stop" type="button" disabled hidden>停止（未送信分を破棄）</button>
     </div>
-    <p id="status" role="status" aria-live="polite">停止中。Meetの標準字幕をONにして確認してください。</p>
-    <p class="note">開始・再開時は各話者の初回発話ID以前を修正後も除外します。受信時刻基準であり、遅配や履歴を生成時刻で完全に区別する保証はありません。氏名は取得せず「話者1（名前未確認）」等で識別します。一時停止で未処理分は破棄し、新しい本文は処理・保持・送信しません。実行済みの読取り最大1件は取消できず、その終了まで再開を拒否します。停止・lease失効では自分の字幕チャネルだけを閉じ、送信済みデータは取り消せません。</p>
+    <details>
+      <summary>仕組みと注意事項</summary>
+      <ul>
+        <li>Meet・Teams・Zoom（Webクライアント）の字幕を約5秒ごとにローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
+        <li>会議参加前に拡張を準備してください。更新時は会議タブを再読み込みして参加し、字幕の表示はユーザーが開始します。Teamsは字幕通信の観測のみ、Zoomは画面に表示された字幕の読取り（画面は書き換えません）で、字幕の開始や購読はしません。</li>
+        <li>転送した字幕はClaude Codeを通じてAnthropicへ送信されます。同意後だけ本文を処理し、Meetでは必要時に既存の会議接続へ自分の字幕チャネルを追加して受信確認を返します。</li>
+        <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。氏名は取得せず「話者1（名前未確認）」等で識別します。</li>
+        <li>読取りが約2秒途切れても自動で復旧しますが、途切れた間の字幕は取得できません。手動で停止・一時停止した後は自動再開しません。</li>
+        <li>一時停止で未処理分は破棄し、新しい字幕は処理・保持・送信しません。送信済みのデータは取り消せません。</li>
+        <li>実会議での互換性は未確認です（Teams・Zoomは実機未検証）。Zoomのデスクトップ版は対象外です。このパネルを離れると停止します。</li>
+      </ul>
+    </details>
   </main>
 </body>
 </html>
