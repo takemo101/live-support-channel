@@ -1,12 +1,17 @@
 import { readCaptions } from "./snapshot.js";
 import { CaptionStream } from "./stream.js";
 
-export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage }) {
+// Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
+// "5" and "30" send on a fixed cadence in seconds. A failed send is retried after RETRY ms.
+const QUIET = 3000, MAX_HOLD = 45000, RETRY = 5000, CADENCE = { 5: 5000, 30: 30000 };
+const DESCRIPTION = { pause: "発話の区切りごと（最大45秒）", 5: "約5秒ごと", 30: "約30秒ごと" };
+export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, now = () => performance.now() }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
   let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false, platform = "Google Meet";
+  let batch = "pause", lastChange = 0, pendingSince = null, lastSent = 0, retryAt = 0;
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
-  const captured = new Map();
+  const captured = new Map(), signatures = new Map();
   const status = message => { el("status").textContent = message; };
   const messages = {
     CAPTIONS_OFF: "Meetの字幕がOFFです。Meetで字幕（CC）をONにして、「再確認」を押してください。",
@@ -93,7 +98,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   function stop(message = "停止しました。未送信の更新は破棄しました。", error = false) {
     active = false; paused = false; busy = false; failed = error; generation++;
     clearInterval(readTimer); clearInterval(sendTimer); readTimer = sendTimer = undefined;
-    capturePromise = lastSnapshot = undefined; captured.clear(); recoveries = 0;
+    capturePromise = lastSnapshot = undefined; captured.clear(); signatures.clear(); recoveries = 0;
     controller?.abort(); stream.stop(); resetReader(); controls(); status(message);
   }
   async function request(path, body) {
@@ -134,7 +139,9 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (!Array.isArray(snapshot.blocks) || snapshot.platform !== platform) throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
     for (const block of snapshot.blocks) {
       if (!block || typeof block.messageId !== "string" || typeof block.transcript !== "string") throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
-      captured.set(JSON.stringify([block.messageId, block.deviceId ?? ""]), block);
+      const key = JSON.stringify([block.messageId, block.deviceId ?? ""]), json = JSON.stringify(block);
+      captured.set(key, block);
+      if (signatures.get(key) !== json) { signatures.set(key, json); lastChange = now(); pendingSince ??= lastChange; }
     }
     let characters = 0;
     for (const block of captured.values()) characters += block.transcript.length;
@@ -174,19 +181,27 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     void task.finally(() => { if (capturePromise === task) capturePromise = undefined; });
     return task;
   }
+  const due = () => {
+    const at = now();
+    if (at < retryAt) return false;
+    if (batch === "pause") return pendingSince !== null && (at - lastChange >= QUIET || at - pendingSince >= MAX_HOLD);
+    return at - lastSent >= CADENCE[batch];
+  };
   async function flush() {
-    if (!active || paused || busy || recovery || !lastSnapshot || stream.busy) return;
+    if (!active || paused || busy || recovery || !lastSnapshot || stream.busy || !due()) return;
     const run = generation;
     await capture();
-    if (!active || paused || recovery || run !== generation || !lastSnapshot) return;
+    if (!active || paused || recovery || run !== generation || !lastSnapshot || !due()) return;
+    const sentAt = now(); lastSent = sentAt;
     try {
       await stream.update({ ...lastSnapshot, blocks: [...captured.values()] });
       if (!active || paused || run !== generation) return;
-      status("字幕を転送中（約5秒ごと）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (recoveries ? `／自動復旧=${recoveries}` : ""));
+      pendingSince = lastChange > sentAt ? lastChange : null;
+      status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (recoveries ? `／自動復旧=${recoveries}` : ""));
     } catch (error) {
       if (active && run === generation) {
         if (error.fatal) stop(error.message + "。停止しました。", true);
-        else status("送信に失敗しました。同じ内容を次回再送します。「停止」で破棄できます。");
+        else { retryAt = now() + RETRY; status("送信に失敗しました。同じ内容を次回再送します。「停止」で破棄できます。"); }
       }
     }
   }
@@ -194,7 +209,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (busy || (resume ? !active || !paused : active)) return;
     if (!resume && (!captionReady || !el("consent").checked || !el("meeting").value)) { status("字幕の準備確認と参加者同意が必要です。"); return; }
     if (!resume && !/^[A-Za-z0-9_-]{43}$/.test(el("token").value.trim())) { status("ペアリングトークン（43文字）を確認してください。"); return; }
-    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; }
+    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; batch = Object.hasOwn(DESCRIPTION, el("batch")?.value) ? el("batch").value : "pause"; }
     active = true; busy = true; failed = false;
     const run = ++generation;
     controller = new AbortController(); captureId = crypto.randomUUID();
@@ -207,11 +222,12 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       if (!active || run !== generation) return;
       if (snapshot.status !== "live") { captionReady = false; stop(describe(snapshot), true); return; }
       if (snapshot.meetingId !== meetingId) { captionReady = false; stop(describe({ code: "MEETING_CHANGED" }), true); return; }
-      captured.clear();
+      captured.clear(); signatures.clear();
       const baseline = remember(snapshot);
+      lastChange = lastSent = now(); pendingSince = null; retryAt = 0;
       if (resume) await stream.update(baseline); else stream.start(baseline);
       if (!active || run !== generation) return;
-      paused = false; readTimer = setInterval(capture, 1000); sendTimer = setInterval(flush, 5000);
+      paused = false; readTimer = setInterval(capture, 1000); sendTimer = setInterval(flush, 500);
       status("取得中です。開始時点までの発言は送らず、これ以降の発言から転送します。");
     } catch (error) {
       if (run === generation) {
@@ -225,7 +241,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (paused) { void startOrResume(true); return; }
     paused = true; generation++;
     clearInterval(readTimer); clearInterval(sendTimer); readTimer = sendTimer = undefined; controller?.abort();
-    capturePromise = lastSnapshot = undefined; captured.clear();
+    capturePromise = lastSnapshot = undefined; captured.clear(); signatures.clear(); pendingSince = null;
     void stream.update({ status: "paused" }); resetReader(); controls();
     status("一時停止中です。この間の字幕は処理・保持・送信しません。再開時は各話者の最初の発言を除外します。");
   }

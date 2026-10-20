@@ -26,7 +26,12 @@ test("real Chrome DOM: Zoom captions are read from the visible subtitle box only
     eq(texts(), ["hello world again"], "left-truncated rolling text is accumulated");
     const second = addRow(box, "a3", "other speaker"); await tick();
     eq(call("read").blocks.map(b => b.deviceId), ["speaker-2", "speaker-3"], "speakers are anonymous, numbered by avatar in order of first sight");
-    eq(JSON.stringify(call("read")).includes("a2.png") || JSON.stringify(call("read")).includes("Alice"), false, "avatar urls and names never leave the page");
+    eq(JSON.stringify(call("read")).includes("a2.png") || JSON.stringify(call("read")).includes("Alice"), false, "avatar urls and unrelated page text never leave the page");
+    eq(call("read").blocks.map(b => b.speakerName), ["話者 2（名前未確認）", "話者 3（名前未確認）"], "anonymous until the participant's tile is visible");
+    const tile = doc.createElement("div"), pic = doc.createElement("div"), image = doc.createElement("img"), label = doc.createElement("span");
+    image.src = "https://example.invalid/a3.png"; label.textContent = "Carol\u202E Example"; pic.append(image); tile.append(pic, label); doc.body.append(tile);
+    for (let i = 0; i < 5; i++) { await new Promise(r => setTimeout(r, 450)); call("read"); }
+    eq(call("read").blocks.map(b => [b.deviceId, b.speakerName]), [["speaker-2", "話者 2（名前未確認）"], ["speaker-3", "Carol Example"]], "the name on the same avatar's video tile names the speaker (sanitised)");
     fresh.textContent = "a completely new sentence"; await tick();
     eq(texts(), ["hello world again", "other speaker", "a completely new sentence"], "unrelated text on a reused row is a new utterance");
     const before = doc.documentElement.outerHTML; call("read"); eq(doc.documentElement.outerHTML, before, "reader never mutates the page");

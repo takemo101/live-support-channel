@@ -16,43 +16,18 @@
     s.records.length = 0; s.speakers.clear(); s.observed = null;
   } });
   const { finish, valid } = life;
-  const clean = value => value.replace(/\s+/g, " ").trim();
   const PREFIX = 16;
   // Teams revises a caption in place (words are corrected, punctuation and case added); an element reused for a different sentence shares no real prefix.
-  const letters = text => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   function related(a, b) {
     if (a === b) return true;
-    const x = letters(a), y = letters(b), limit = Math.min(PREFIX, x.length, y.length); let i = 0;
+    const x = life.letters(a), y = life.letters(b), limit = Math.min(PREFIX, x.length, y.length); let i = 0;
     while (i < limit && x[i] === y[i]) i++;
     return limit > 0 && i === limit;
   }
   // The only structure relied on: a text element whose parent is preceded by a sibling element holding the speaker's label.
   // Text that cannot be attributed this way is unknown: if nothing at all in the list matches, the reader stops instead of guessing.
   function rows(list, stats) {
-    const walker = list.ownerDocument.createTreeWalker(list, 4);
-    const candidates = new Map();
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!clean(node.nodeValue ?? "")) continue;
-      const element = node.parentElement;
-      if (!element || element === list || candidates.has(element)) continue;
-      const container = element.parentElement;
-      candidates.set(element, container && container !== list && list.contains(container) ? container.previousElementSibling : null);
-      if (candidates.size > 512) fail("CAPTION_LIMIT");
-    }
-    // A label that itself contains a complete (text, label) row is really an enclosing item, not a speaker label.
-    const elements = [...candidates.keys()];
-    const holdsRow = item => elements.some(x => item.contains(x) && x.parentElement !== item && x.parentElement?.previousElementSibling && item.contains(x.parentElement.previousElementSibling));
-    const genuine = new Map();
-    for (const [element, label] of candidates) if (label && clean(label.textContent ?? "") && !holdsRow(label)) genuine.set(element, label);
-    const labels = new Set(genuine.values());
-    const out = []; let unmatched = 0;
-    for (const element of elements) {
-      if ([...labels].some(l => l.contains(element))) continue;
-      const label = genuine.get(element), name = label ? clean(label.textContent ?? "") : "", text = clean(element.textContent ?? "");
-      if (!name || !text || name.length > 256) { unmatched++; continue; }
-      if (text.length > 32768) fail("CAPTION_LIMIT");
-      out.push({ element, name, text });
-    }
+    const { rows: out, unmatched } = life.labelledRows(list, 1);
     stats.rows = out.length; stats.unmatched = unmatched;
     if (!out.length && unmatched) fail("CAPTION_FORMAT_UNKNOWN");
     if (out.length > 256) fail("CAPTION_LIMIT");
@@ -69,7 +44,7 @@
     s.characters += text.length - (record.block?.transcript.length ?? 0);
     if (s.characters > 2_000_000) fail("CAPTION_LIMIT");
     record.block = { messageId: record.localId, deviceId: `speaker-${record.speaker}`, messageVersion: record.revision,
-      speakerName: `話者 ${record.speaker}（名前未確認）`, transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
+      speakerName: record.name, transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
     s.stats.accepted++;
   }
   function create(s, row, excluded) {

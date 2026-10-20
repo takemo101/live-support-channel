@@ -30,9 +30,8 @@ test("real Chrome DOM: Teams captions are read from the visible live-caption lis
     fresh.textContent = "hello, world!"; await tick();
     eq(texts(), ["hello, world!"], "in-place correction replaces the same utterance");
     addRow(list, "Alice Example", "other speaker"); await tick();
-    eq(call("read").blocks.map(b => [b.deviceId, b.speakerName]), [["speaker-2", "話者 2（名前未確認）"], ["speaker-1", "話者 1（名前未確認）"]], "speakers are anonymous, numbered by first sight; the same label is the same speaker");
-    const dump = JSON.stringify(call("read")); eq(dump.includes("Bob") || dump.includes("Alice") || dump.includes("Example"), false, "display names never leave the page");
-    fresh.textContent = "a completely new sentence"; await tick();
+    eq(call("read").blocks.map(b => [b.deviceId, b.speakerName]), [["speaker-2", "Bob Example"], ["speaker-1", "Alice Example"]], "the visible display name is sent; the same label is the same speaker, numbered by first sight");
+        fresh.textContent = "a completely new sentence"; await tick();
     eq(texts(), ["hello, world!", "other speaker", "a completely new sentence"], "unrelated text on a reused row is a new utterance");
     const before = document.documentElement.outerHTML; call("read"); eq(document.documentElement.outerHTML, before, "reader never mutates the page");
     const rerender = list.lastElementChild; const copy = rerender.cloneNode(true); rerender.replaceWith(copy); await tick(); call("read");
@@ -41,6 +40,9 @@ test("real Chrome DOM: Teams captions are read from the visible live-caption lis
     list.remove(); await tick(); eq(call("read").status, "live", "caption list disappearing is not an error");
     list = mount(); const again = addRow(list, "Bob Example", "after remount"); await tick(); call("read"); again.textContent = "after remount grows"; await tick();
     eq(texts().includes("after remount grows"), true, "a new caption list is re-observed");
+    addRow(list, "Eve\u202Edanger\u0000 " + "x".repeat(100), "hostile label"); await tick();
+    const hostile = call("read").blocks.find(b => b.transcript === "hostile label");
+    eq([hostile.speakerName.length <= 64, /[\p{Cc}\u202e]/u.test(hostile.speakerName), hostile.speakerName.startsWith("Eve danger")], [true, false, true], "a hostile label is sanitised and bounded");
     list.append(Object.assign(document.createElement("div"), { textContent: "unstructured text" })); list.innerHTML = "<div>no label rows</div>";
     eq(call("read").code, "CAPTION_FORMAT_UNKNOWN", "unknown structure stops instead of guessing");
     eq(call("read").diagnostics.unmatched >= 1, true, "unmatched count reported");

@@ -13,11 +13,11 @@ Chrome上のMeet標準字幕を、明示選択した一つのClaude Codeセッ�
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
 - Meet限定の参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。
 - 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
-- 約1秒のsnapshot／heartbeat、約5秒の差分送信。発話IDと改訂でupsert。
+- 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 
-対象外：Zoomの状態ストア・ソケット・参加者名の読取り、Teamsの字幕開始・購読・内部状態の読取り、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
+対象外：Zoomの状態ストア・ソケット・参加者一覧の読取り、Teamsの字幕開始・購読・内部状態の読取り、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
 
 字幕は取得できた一部分です。初回ID除外、通信遅延・欠落等があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
 
@@ -86,7 +86,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 これは生成時刻による厳密な境界ではない。検証済みの生成時刻fieldがなく、受信時刻とID順序に依存するため、遅配・履歴を完全に見分ける保証はない。生成時刻での完全な区間分離が必要な会議には使わない。
 
-氏名・参加者一覧は収集せず、話者は「話者1（名前未確認）」等で区別する。内部device IDはモデルへ送らない。本人の役割は推測で決めない。
+参加者一覧は収集しない。話者名は画面に表示されている表示名を送る（読み取れないときだけ「話者N（名前未確認）」）。表示名は制御・双方向制御文字を除いて64文字に制限し、非信頼・未検証のラベルとして扱う。内部device IDと画像URLは送らない。本人の特定は `/meeting` スキルが本人に確認した名前だけを根拠にし、本人の発言は助言・要約・引用に含めない。本人の役割は推測で決めない。
 
 ### 一時停止・停止
 
@@ -116,13 +116,13 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 Meet限定 MAIN/document_start：RTCPeerConnectionを準備
  → 同意・health・標準字幕ON・接続確認
  → 既存の字幕チャネル、または自分のcaptions/captions_v2購読
- → bounded protobuf/gzip decode、初回ID除外、匿名話者、改訂upsert
+ → bounded protobuf/gzip decode、初回ID除外、話者名（画面の字幕と本文が一致し名前が1つに決まる場合のみ。それ以外は匿名）、改訂upsert
  → 通常page evalで自作hookからsnapshot／1秒heartbeat
- → CaptionStream → 約5秒のBearer POST /captions
+ → CaptionStream → まとめ方に応じたBearer POST /captions（既定は発話の区切りごと）
  → Host／Origin／schema／size／sequence検査 → Claude Channels
 ```
 
-extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、DOM本文・fetch・WebSocket・チャット・他拡張へfallbackしない。サイトのCSPと管理ポリシーに従う。
+extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、字幕本文をDOMから読むfallback・fetch・WebSocket・チャット・他拡張へfallbackしない。話者名の付与だけ、画面に表示された字幕リスト（`div[role=region][tabindex=0]`）を読み取り専用で走査し、本文が一致する行の名前が1つに決まる場合だけ使う（曖昧・字幕非表示では匿名のまま。DOMは書き換えない）。サイトのCSPと管理ポリシーに従う。
 
 同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
 
@@ -167,7 +167,7 @@ bind先はloopbackのみ。`Authorization: Bearer <pairing-token>` が必要で�
 | meetingId | 1〜512文字、同sessionで固定 |
 | platform | schemaはGoogle Meet／Zoom／Teams。reader実装はMeet・Teams・Zoom（Webクライアント） |
 | updates | 1〜64件 |
-| messageId／deviceId | 1〜512文字。発話は区間内ローカルID、deviceIdは匿名話者ID（schemaでは任意） |
+| messageId／deviceId | 1〜512文字。発話は区間内ローカルID、deviceIdは匿名話者ID（schemaでは任意）。speakerNameは表示名（最大64文字に整形）または匿名ラベル |
 | messageVersion | 0以上のsafe integer。解釈できるprovider revision |
 | speakerName／transcript | 1〜256文字／0〜32768文字 |
 | timestamp／version | 非負有限数。timestampは採用時の受信Date.now()、versionはprovider revision。音声の生成／開始時刻ではない |

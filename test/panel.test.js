@@ -9,12 +9,12 @@ class Element extends EventTarget {
   click() { if (!this.disabled) this.dispatchEvent(new Event("click")); }
 }
 function setup(t, fetcher, storage) {
-  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "assist"].map(id => [id, new Element()]));
-  elements.token.value = "t".repeat(43); elements.consent.checked = true;
+  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "assist", "batch"].map(id => [id, new Element()]));
+  elements.batch.value = "pause"; elements.token.value = "t".repeat(43); elements.consent.checked = true;
   const block = { messageId: "m", messageVersion: 1, speakerName: "Demo", transcript: "private baseline", timestamp: 100, version: 1 };
   const fixture = { captionReady: true, error: undefined, snapshot: { status: "live", meetingId: "meet.google.com/abc-defg-hij", platform: "Google Meet", blocks: [block] } };
   const calls = [], contexts = [], actions = [], navigation = new Set();
-  const timers = new Map();
+  const timers = new Map(), clock = { t: 0 };
   const inspectedWindow = { eval(expression, options, done) {
     contexts.push(options);
     const params = JSON.parse(expression.slice(expression.lastIndexOf("})(") + 3, -1));
@@ -30,12 +30,13 @@ function setup(t, fetcher, storage) {
   const panel = createPanel({
     document: { getElementById: id => elements[id], createElement: () => new Element() }, inspectedWindow, onNavigated,
     fetch: async (url, options) => { calls.push({ url, options }); return fetcher ? fetcher(url, options) : { ok: true, status: 202 }; },
-    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage,
+    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage, now: () => clock.t,
   });
   t.after(() => panel.dispose());
-  return { elements, block, fixture, calls, contexts, actions, navigation,
-    capture: () => timers.get(1000)?.(), flush: () => timers.get(5000)?.(),
-    async poll() { await timers.get(1000)?.(); await timers.get(5000)?.(); },
+  return { elements, block, fixture, calls, contexts, actions, navigation, clock,
+    capture: () => timers.get(1000)?.(), tick: async ms => { clock.t += ms; await timers.get(500)?.(); }, flush: async () => { clock.t += 5000; await timers.get(500)?.(); },
+    // One read, then enough quiet time for the default batching to be due, then the send decision.
+    async poll() { await timers.get(1000)?.(); clock.t += 5000; await timers.get(500)?.(); },
   };
 }
 async function start(s) {
@@ -412,4 +413,35 @@ test("diagnostic counters and sanitized UI hook names are shown, nothing else", 
   s.elements.refresh.click(); await turn();
   assert.match(s.elements.status.textContent, /構造不明=3/); assert.match(s.elements.status.textContent, /data-tid=closed-caption-renderer-wrapper,closed-caption-text/);
   assert.ok(!s.elements.status.textContent.includes("bad tid") && !s.elements.status.textContent.includes("PRIVATE"));
+});
+
+test("default batching holds while speech continues and sends once captions are quiet", async t => {
+  const s = setup(t); await start(s);
+  fresh(s, "a", "first words"); await s.capture(); await s.tick(1000); assert.equal(posts(s).length, 0, "still within the quiet window");
+  s.fixture.snapshot.blocks[1].transcript += " and more"; await s.tick(1500); await s.capture(); await s.tick(2000); assert.equal(posts(s).length, 0, "a change restarts the quiet window");
+  await s.tick(1500);
+  assert.equal(posts(s).length, 1); assert.deepEqual(JSON.parse(posts(s)[0].options.body).updates.map(b => b.transcript), ["first words and more"]);
+  await s.tick(10000); assert.equal(posts(s).length, 1, "nothing pending, nothing sent");
+});
+test("default batching still sends during continuous speech after the maximum hold", async t => {
+  const s = setup(t); await start(s);
+  fresh(s, "a", "x"); await s.capture();
+  for (let i = 0; i < 44; i++) { s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(1000); await s.capture(); }
+  assert.equal(posts(s).length, 0, "44s of constant change is still held");
+  s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(1000); await s.capture(); await s.tick(0);
+  assert.equal(posts(s).length, 1, "the oldest unsent change is at most 45s old");
+});
+for (const [mode, ms] of [["5", 5000], ["30", 30000]]) test("fixed cadence " + mode + "s sends on schedule only", async t => {
+  const s = setup(t); s.elements.batch.value = mode; await start(s);
+  fresh(s, "a", "cadence caption"); await s.capture();
+  await s.tick(ms - 500); assert.equal(posts(s).length, 0);
+  await s.tick(500); assert.equal(posts(s).length, 1);
+});
+test("a failed send is retried after a pause, not on every tick", async t => {
+  let fail = true;
+  const s = setup(t, url => url.endsWith("/health") || !fail ? { ok: true, status: 202 } : { ok: false, status: 503 });
+  await start(s); fresh(s, "a", "retry caption"); await s.capture();
+  await s.tick(5000); assert.equal(posts(s).length, 1);
+  await s.tick(500); await s.tick(500); assert.equal(posts(s).length, 1, "no retry inside the back-off");
+  fail = false; await s.tick(5000); assert.equal(posts(s).length, 2);
 });
