@@ -1,5 +1,6 @@
 // MAIN/document_start, loaded immediately before a platform hook in the same content-script entry.
-// Shared capture lifecycle (owner, lease, terminal state, recover guard, command envelope) plus two pure helpers over an element the hook hands in:
+// Shared capture lifecycle (owner, lease, terminal state, recover guard, command envelope), the skeleton the DOM readers (Teams, Zoom) share
+// (speaker numbering, root observation, the start/recover/read command) and two pure helpers over an element the hook hands in:
 // displayName (sanitising a visible speaker label) and labelledRows (pairing visible caption text with its speaker label). Nothing else reads page data.
 // The factory is handed over through a one-shot window property that the hook removes before any page script can run.
 (() => {
@@ -13,6 +14,8 @@
       const s = current; if (!s) return generation;
       const retired = ++generation;
       current = null; cancel(s.timer);
+      try { s.observer?.disconnect(); } catch {}
+      s.observer = s.observed = null;
       terminal = { owner: s.owner, generation: s.generation, meetingId: s.meetingId, code, assisted: s.assisted === true,
         stats: { ...s.stats, queued: 0, inFlight: inFlight ? inFlight(s) : 0 } };
       cleanup(s);
@@ -59,6 +62,7 @@
       renew(s);
       return { status: "live", meetingId, platform, blocks: blocks(s), diagnostics: { ...s.stats } };
     }
+    const limit = () => Object.assign(new Error("CAPTION_LIMIT"), { code: "CAPTION_LIMIT" });
     const clean = value => value.replace(/\s+/g, " ").trim();
     const letters = text => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
     // A speaker label is untrusted page text that ends up in the model's input: control and bidi-override characters are dropped and the length is bounded.
@@ -75,7 +79,7 @@
         if (!element || element === list || candidates.has(element)) continue;
         const anchor = anchorOf(element);
         candidates.set(element, anchor && anchor !== list && list.contains(anchor) ? anchor.previousElementSibling : null);
-        if (candidates.size > 512) throw Object.assign(new Error("CAPTION_LIMIT"), { code: "CAPTION_LIMIT" });
+        if (candidates.size > 512) throw limit();
       }
       const elements = [...candidates.keys()];
       const holdsRow = item => elements.some(x => { const a = anchorOf(x), label = a?.previousElementSibling; return item.contains(x) && a !== item && label && item.contains(label) && clean(label.textContent ?? ""); });
@@ -87,12 +91,48 @@
         if ([...labels].some(l => l.contains(element))) continue;
         const label = genuine.get(element), name = label ? displayName(label.textContent ?? "") : "", text = clean(element.textContent ?? "");
         if (!name || !text) { unmatched++; continue; }
-        if (text.length > 32768) throw Object.assign(new Error("CAPTION_LIMIT"), { code: "CAPTION_LIMIT" });
+        if (text.length > 32768) throw limit();
         rows.push({ element, name, text });
       }
       return { rows, unmatched };
     }
-    return { finish, valid, renew, activate, prologue, epilogue, displayName, labelledRows, letters,
+    // --- DOM reader skeleton. A reader state holds s.records, s.speakers, s.elements, s.characters and, while watching, s.observer / s.observed.
+    function speakerNumber(s, key) {
+      let number = s.speakers.get(key);
+      if (!number) { if (s.speakers.size >= 256) throw limit(); number = s.speakers.size + 1; s.speakers.set(key, number); }
+      return number;
+    }
+    function track(s, record) { if (s.records.length >= 4000) throw limit(); s.records.push(record); }
+    function charge(s, delta) { s.characters += delta; if (s.characters > 2_000_000) throw limit(); }
+    // Keeps exactly one MutationObserver on the current caption root; a replaced root is re-attached, a missing one detaches.
+    function observe(s, root, onChange) {
+      if (root === s.observed) return;
+      try { s.observer?.disconnect(); } catch {}
+      s.observed = root; s.observer = null;
+      if (root) { s.observer = new page.MutationObserver(() => { if (valid(s)) onChange(s); }); s.observer.observe(root, { subtree: true, childList: true, characterData: true }); }
+    }
+    const stop = (s, error, diagnose) => {
+      if (current !== s) return;
+      diagnose?.(s); finish(error?.code === "CAPTION_LIMIT" ? "CAPTION_LIMIT" : "CAPTION_FORMAT_UNKNOWN");
+    };
+    function watch(s, sample, diagnose) { try { sample(s); } catch (error) { stop(s, error, diagnose); } }
+    // start / recover / read for a DOM reader: `sample(s, baseline)` scans the page; `extra` / `stats` add reader-specific state and counters.
+    function domCommand(params, { metadata, platform, sample, diagnose, blocks, extra = {}, stats = {} }) {
+      const early = prologue(params, metadata); if (early) return early;
+      const { action, meetingId, captureId } = params;
+      if (action === "start" || action === "recover") {
+        const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
+        const retired = finish("CAPTURE_REPLACED");
+        if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
+        terminal = null;
+        const s = { owner: captureId, meetingId, observer: null, observed: null, elements: new WeakMap(), records: [], speakers: new Map(), characters: 0, ...extra,
+          stats: { ...stats, received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } };
+        activate(s);
+        try { sample(s, true); } catch (error) { stop(s, error, diagnose); return { status: "unavailable", code: terminal?.code ?? "CAPTURE_CHANGED" }; }
+      }
+      return epilogue(params, { platform, blocks, before: (s, action) => { if (action === "read") watch(s, sample, diagnose); } });
+    }
+    return { finish, valid, renew, activate, prologue, epilogue, displayName, labelledRows, letters, speakerNumber, track, charge, observe, watch, domCommand,
       get current() { return current; }, get terminal() { return terminal; }, get generation() { return generation; }, clearTerminal() { terminal = null; } };
   }
   Object.defineProperty(window, handoff, { value: createLifecycle, configurable: true, writable: false });
