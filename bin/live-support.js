@@ -10,7 +10,7 @@ import { once } from "node:events";
 import { runtimeDirectory } from "../server/runtime.js";
 import { prepareToken } from "../server/token.js";
 
-const help = `Live Captions (Meet experimental) — one receiving Claude Code project at a time
+const help = `Live Support — meeting captions (Meet, Teams, Zoom) to one Claude Code project at a time
   live-support setup    Install Chrome extension assets in your user directory
   live-support claude   Launch a meeting-enabled Claude Code in the current project
   live-support token    Print the pairing token locally (never share it)
