@@ -49,7 +49,9 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
       .map(([key, label]) => `${label}=${d[key]}`);
     const labels = Array.isArray(d?.channelLabels) ? d.channelLabels.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,32}$/.test(l)).slice(0, 8) : [];
-    return [...counts, ...(labels.length ? [`ラベル=${labels.join(",")}`] : [])].join("／");
+    const reason = typeof d?.reason === "string" && /^[a-z]{1,8}:[a-z-]{1,24}$/.test(d.reason) ? [`理由=${d.reason}`] : [];
+    const keys = Array.isArray(d?.itemKeys) ? d.itemKeys.filter(k => typeof k === "string" && /^[A-Za-z0-9_]{1,24}$/.test(k)).slice(0, 16) : [];
+    return [...counts, ...reason, ...(keys.length ? [`項目=${keys.join(",")}`] : []), ...(labels.length ? [`ラベル=${labels.join(",")}`] : [])].join("／");
   }
   function describe(result) {
     const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";

@@ -12,7 +12,10 @@
   let prepareError = null;
   const labels = new Set();
   const fail = code => { throw Object.assign(new Error(code), { code }); };
-  const invalid = () => fail("CAPTION_FORMAT_UNKNOWN");
+  // Rejections carry a fixed-vocabulary reason (field + JS type, never a value) so an unknown Teams layout can be diagnosed without transcript content.
+  const kind = v => v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+  const invalid = reason => { throw Object.assign(new Error("CAPTION_FORMAT_UNKNOWN"), { code: "CAPTION_FORMAT_UNKNOWN", reason }); };
+  let probe = null;
   const currentMeeting = () => page.location.protocol === "https:" && hosts.has(page.location.hostname) ? `${page.location.hostname}/call` : null;
   const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.clear(); s.speakers.clear(); s.entries.clear(); } });
   const { finish, valid } = life;
@@ -31,12 +34,14 @@
   function ingest(s, raw) {
     if (!raw || typeof raw !== "object" || !("timestampAudioSent" in raw)) return;
     if (!valid(s)) return;
+    probe = raw;
     const { id, userId, timestampAudioSent, text } = raw;
     const stamp = typeof timestampAudioSent === "number" && Number.isSafeInteger(timestampAudioSent) && timestampAudioSent >= 0 ? BigInt(timestampAudioSent)
-      : typeof timestampAudioSent === "string" && /^\d{1,20}$/.test(timestampAudioSent) ? BigInt(timestampAudioSent) : invalid();
-    if (typeof userId !== "string" || !userId || userId.length > 512 || /\p{Cc}/u.test(userId)) invalid();
-    const version = typeof id === "string" ? /^[^/]{1,256}\/(\d{1,9})$/.exec(id) : null; if (!version) invalid();
-    if (text !== undefined && text !== null && typeof text !== "string") invalid();
+      : typeof timestampAudioSent === "string" && /^\d{1,20}$/.test(timestampAudioSent) ? BigInt(timestampAudioSent)
+      : invalid(typeof timestampAudioSent === "number" ? (Number.isInteger(timestampAudioSent) ? (timestampAudioSent < 0 ? "ts:negative" : "ts:unsafe-integer") : "ts:non-integer") : "ts:" + kind(timestampAudioSent));
+    if (typeof userId !== "string" || !userId || userId.length > 512 || /\p{Cc}/u.test(userId)) invalid(typeof userId !== "string" ? "user:" + kind(userId) : !userId ? "user:empty" : userId.length > 512 ? "user:long" : "user:control");
+    const version = typeof id === "string" ? /^[^/]{1,256}\/(\d{1,9})$/.exec(id) : null; if (!version) invalid(typeof id === "string" ? "id:shape" : "id:" + kind(id));
+    if (text !== undefined && text !== null && typeof text !== "string") invalid("text:" + kind(text));
     if (typeof text === "string" && text.length > 32768) fail("CAPTION_LIMIT");
     s.stats.received++;
     const revision = Number(version[1]);
@@ -76,6 +81,10 @@
       const items = results(event.data, s.stats); if (!items) return;
       for (const raw of items) { ingest(s, raw); if (life.current !== s) return; }
     } catch (error) {
+      if (life.current === s && typeof error?.reason === "string") {
+        s.stats.reason = error.reason;
+        if (probe && typeof probe === "object") s.stats.itemKeys = Object.keys(probe).filter(k => /^[A-Za-z0-9_]{1,24}$/.test(k)).slice(0, 16);
+      }
       if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
     }
   }

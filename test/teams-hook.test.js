@@ -181,3 +181,21 @@ test("captions behind binary framing are read and dropped frames are counted by 
   assert.deepEqual({ frames: d.frames, nonBinary: d.nonBinary, noJson: d.noJson, nonCaption: d.nonCaption, received: d.received, accepted: d.accepted }, { frames: 5, nonBinary: 1, noJson: 1, nonCaption: 1, received: 2, accepted: 1 });
   f.command("reset");
 });
+test("an unreadable recognition result reports which field failed (type only, never values) and its field names", t => {
+  const f = fixture(t);
+  const cases = [
+    [{ id: "m/1", userId: "u", timestampAudioSent: 6.4e17, text: "SECRET" }, "ts:unsafe-integer"],
+    [{ id: "m/1", userId: "u", timestampAudioSent: 1.5, text: "SECRET" }, "ts:non-integer"],
+    [{ id: "m/1", timestampAudioSent: 5, text: "SECRET" }, "user:undefined"],
+    [{ id: "no-slash", userId: "u", timestampAudioSent: 5, text: "SECRET" }, "id:shape"],
+    [{ id: "m/1", userId: "u", timestampAudioSent: 5, text: { a: 1 } }, "text:object"],
+  ];
+  for (const [raw, reason] of cases) {
+    f.command("start"); f.channel.message(encode(results(raw)));
+    const ended = f.command("read");
+    assert.equal(ended.code, "CAPTION_FORMAT_UNKNOWN"); assert.equal(ended.diagnostics.reason, reason);
+    assert.deepEqual(plain(ended.diagnostics.itemKeys).sort(), Object.keys(raw).sort());
+    assert.ok(!JSON.stringify(ended).includes("SECRET"));
+    f.command("reset");
+  }
+});

@@ -413,3 +413,12 @@ test("diagnostic counters and sanitized channel labels are shown, nothing else",
   assert.match(s.elements.status.textContent, /フレーム=4/); assert.match(s.elements.status.textContent, /main-channel,collections/);
   assert.ok(!s.elements.status.textContent.includes("bad label") && !s.elements.status.textContent.includes("PRIVATE"));
 });
+test("rejection reason and item field names are shown only when they match the fixed vocabulary", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { peers: 1, reason: "ts:unsafe-integer", itemKeys: ["id", "userId", "bad key<x>", "text", 3], secret: "PRIVATE" };
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /理由=ts:unsafe-integer/); assert.match(s.elements.status.textContent, /項目=id,userId,text/);
+  assert.ok(!s.elements.status.textContent.includes("bad key") && !s.elements.status.textContent.includes("PRIVATE"));
+  s.fixture.diagnostics = { reason: "ts: <script>PRIVATE" }; s.elements.refresh.click(); await turn();
+  assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("理由="));
+});
