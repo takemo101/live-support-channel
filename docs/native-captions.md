@@ -1,11 +1,11 @@
-# Meet字幕通信reader：根拠・制限・診断
+# Meet字幕通信reader：根拠・制限・診断（TeamsとZoomは画面字幕のDOM読取り。SPEC参照）
 
-対象：v0.7.0、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** Google Meet限定の試験版で、実会議・実Claudeは未確認。TeamsとZoomは画面字幕のDOM読取りの試験版で、どちらも実機未検証です。
+対象：v0.7.0、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** 本書はGoogle Meetの字幕通信readerの根拠で、実会議・実Claudeは未確認。TeamsとZoomは画面字幕のDOM読取りの試験版（SPEC参照）で、どちらも実機未検証です。
 
 ## 方式変更の経緯
 
 - v0.3.1まで：別拡張Tactiqのexecution contextを読む設計。ユーザー環境のPermission deniedと、[Chromiumの制限](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/panels/common/ExtensionServer.ts)／[テスト](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/panels/common/ExtensionServer.test.ts)が一致したため削除。
-- v0.4：独立した標準字幕DOM reader。公開ソース由来の候補構造を合成DOMで検証したが、実Meetでは標準字幕表示中にもCAPTION_ROWS_NOT_FOUNDが報告された。実際のDOM階層は取得しておらず、原因の階層までは断定していない。[当時の根拠・制限](https://github.com/takemo101/tactiq-live-channel/blob/33c61f0abc23654ae80358f49a6c04ab455190cf/docs/native-captions.md)は履歴に残す。
+- v0.4：独立した標準字幕DOM reader。公開ソース由来の候補構造を合成DOMで検証したが、実Meetでは標準字幕表示中にもCAPTION_ROWS_NOT_FOUNDが報告された。実際のDOM階層は取得しておらず、原因の階層までは断定していない。[当時の根拠・制限](https://github.com/takemo101/live-support-channel/blob/33c61f0abc23654ae80358f49a6c04ab455190cf/docs/native-captions.md)は履歴に残す。
 - v0.5：DOMの子配置に依存せず、自作のMAIN-worldフックで既知の字幕通信を処理する。Tactiq本体・別拡張状態は使わず、DOM本文へのfallbackもしない。
 
 ## 静的解析とwire根拠
