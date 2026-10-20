@@ -105,13 +105,22 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
     if (!port) { if (browser.exitCode !== null) throw Error("isolated Chrome exited"); await delay(20); }
   }
   assert.ok(port, "isolated Chrome did not expose its local test CDP endpoint");
-  const pages = await (await fetch("http://127.0.0.1:" + port + "/json/list")).json();
-  const target = pages.find(p => p.type === "page"); assert.ok(target);
+  let target;
+  for (let i = 0; i < 250 && !target; i++) {
+    try { target = (await (await fetch("http://127.0.0.1:" + port + "/json/list")).json()).find(p => p.type === "page" && p.url.startsWith("file://")); } catch {}
+    if (!target) await delay(20);
+  }
+  assert.ok(target, "isolated Chrome did not list its test page");
   socket = new WebSocket(target.webSocketDebuggerUrl); await once(socket, "open");
   let next = 0; const pending = new Map();
   socket.addEventListener("message", event => { const message = JSON.parse(event.data); const item = pending.get(message.id); if (item) { pending.delete(message.id); clearTimeout(item.timer); if (message.error) item.reject(Error(message.error.message)); else item.resolve(message.result); } });
   const evaluate = expression => new Promise((resolve, reject) => { const id = ++next; const timer = setTimeout(() => { pending.delete(id); reject(Error("Chrome test evaluation timeout")); }, 18000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } })); });
-  const evaluated = await evaluate("window.__testPromise");
+  let evaluated;
+  for (let attempt = 0; attempt < 10 && !evaluated; attempt++) {
+    // The page may still be committing its navigation: a destroyed context is retried, anything else is a real failure.
+    try { evaluated = await evaluate("(async () => { for (let i = 0; i < 500 && !window.__testPromise; i++) await new Promise(r => setTimeout(r, 20)); return window.__testPromise; })()"); }
+    catch (error) { if (!/context was destroyed|Cannot find context/i.test(error.message) || attempt === 9) throw error; await delay(50); }
+  }
   assert.equal(evaluated.exceptionDetails, undefined, evaluated.exceptionDetails?.text);
   const result = evaluated.result.value; assert.ok(result); assert.equal(result.ok, true, result.error + "\n" + result.stack);
   assert.ok(result.checks >= 20); assert.equal(result.sent.length, 3);

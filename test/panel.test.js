@@ -391,3 +391,18 @@ test("a snapshot from a different platform than the discovered one stops the cap
   await start(s); assert.equal(s.elements.stop.disabled, true); assert.match(s.elements.status.textContent, /READ_FAILED/);
   assert.equal(posts(s).length, 0);
 });
+
+test("a Zoom capture is discovered, explained, and sent as Zoom", async t => {
+  const s = setup(t); s.fixture.platform = "Zoom"; s.fixture.snapshot.platform = "Zoom"; s.fixture.snapshot.meetingId = "app.zoom.us/wc/12345678";
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /Zoom/); assert.match(s.elements.status.textContent, /字幕/);
+  await start(s); fresh(s, "fresh", "zoom words"); await s.poll();
+  assert.equal(JSON.parse(posts(s)[0].options.body).platform, "Zoom");
+});
+test("Zoom frame and unsupported-host refusals are explained", async t => {
+  for (const code of ["ZOOM_FRAME_NOT_FOUND", "PLATFORM_NOT_IMPLEMENTED"]) {
+    const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = code;
+    s.elements.refresh.click(); await turn();
+    assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
+  }
+});

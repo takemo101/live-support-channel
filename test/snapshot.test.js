@@ -18,7 +18,7 @@ test("no foreign extension context or Tactiq store access remains", () => {
   assert.ok(!readCaptions.toString().includes("chrome-extension://"));
   assert.ok(!readCaptions.toString().includes("window.tactiq"));
 });
-for (const host of ["app.zoom.us", "us02web.zoom.us"]) {
+for (const host of ["us02web.zoom.us", "zoom.us"]) {
   test("unimplemented platform fails before reading DOM: " + host, () => {
     assert.equal(inspect({ action: "discover" }, { host }).code, "PLATFORM_NOT_IMPLEMENTED");
   });
@@ -68,4 +68,16 @@ for (const host of ["teams.microsoft.com", "teams.live.com", "teams.cloud.micros
 });
 test("Teams lookalike hosts and non-https stay unsupported", () => {
   for (const host of ["teams.microsoft.com.evil.example", "evilteams.live.com", "teams.cloud.microsoft.evil.example"]) assert.equal(inspect({ action: "discover" }, { host, path: "/v2/" }).code, "UNSUPPORTED_HOST");
+});
+
+test("Zoom web client is read only through the prepared hook, bound to its meeting number", () => {
+  const calls = [], api = { version: 1, command(params) { calls.push(params); return { status: "ready", captionReady: true, code: "READY" }; } };
+  const options = { host: "app.zoom.us", path: "/wc/12345678/join", api };
+  assert.equal(inspect({ action: "discover" }, options).code, "READY");
+  assert.equal(calls[0].meetingId, "app.zoom.us/wc/12345678");
+  assert.equal(inspect({ action: "read", meetingId: "app.zoom.us/wc/12345678", captureId: "c" }, options).status, "ready");
+  assert.equal(inspect({ action: "read", meetingId: "app.zoom.us/wc/99999999", captureId: "c" }, options).code, "MEETING_CHANGED");
+  assert.equal(inspect({ action: "discover" }, { ...options, path: "/" }).code, "NOT_MEETING_PAGE");
+  assert.equal(inspect({ action: "discover" }, { ...options, framed: true }).code, "UNSUPPORTED_FRAME");
+  assert.equal(calls.length, 2);
 });

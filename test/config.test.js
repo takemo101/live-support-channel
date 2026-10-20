@@ -12,6 +12,7 @@ test("extension prepares a MAIN-world hook on Meet only with no broad permission
   assert.deepEqual(manifest.content_scripts, [
     { matches: ["https://meet.google.com/*"], js: ["meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
     { matches: ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], js: ["teams-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
+    { matches: ["https://app.zoom.us/*"], js: ["zoom-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
   ]);
   assert.match(manifest.content_security_policy.extension_pages, /connect-src http:\/\/127\.0\.0\.1:43821;/);
   const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");
@@ -20,7 +21,7 @@ test("extension prepares a MAIN-world hook on Meet only with no broad permission
   assert.match(html, /字幕通信/);
   assert.match(html, /会議参加前/);
   assert.match(html, /Tactiqの一時停止とは連動しません/);
-  assert.match(html, /Zoom.*未実装/); assert.match(html, /Teams/);
+  assert.match(html, /Zoom/); assert.match(html, /Teams/);
   assert.ok(!/<script[^>]*>[^<\s]/.test(html));
 });
 test("leaving the DevTools panel signals a stop", async () => {

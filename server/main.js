@@ -21,7 +21,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invali
 const runtime = runtimeDirectory();
 const token = await prepareToken(runtime);
 let initialized = false;
-const mcp = new Server({ name: "tactiq-live", version: "0.6.0" }, {
+const mcp = new Server({ name: "tactiq-live", version: "0.7.0" }, {
   capabilities: { experimental: { "claude/channel": {} } }, instructions,
 });
 const bridge = createBridge({

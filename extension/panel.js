@@ -32,8 +32,9 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     CAPTION_REVISION_CONFLICT: "同じ修正番号で本文が異なるため停止しました。",
     CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
     CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
-    PLATFORM_NOT_IMPLEMENTED: "現在の対応はGoogle MeetとTeamsの字幕通信（試験版）です。Zoomの取得処理は未実装です。",
-    UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle MeetとTeamsです。",
+    PLATFORM_NOT_IMPLEMENTED: "ZoomはWebクライアント（app.zoom.us）だけに対応しています。ブラウザ版で参加してください。",
+    ZOOM_FRAME_NOT_FOUND: "Zoomの会議画面がまだ開かれていません。会議に参加し、字幕を表示してから「再確認」してください。",
+    UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle Meet、Teams、Zoom（Webクライアント）です。",
     UNSUPPORTED_FRAME: "会議のメインフレーム以外は取得しません。",
     NOT_MEETING_PAGE: "Meet会議のページを開いてください。",
     MEETING_CHANGED: "会議ページが変わったため停止しました。",
@@ -115,9 +116,11 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
         const option = document.createElement("option"); option.value = meeting.id; option.textContent = meeting.title; el("meeting").append(option);
       }
       captionReady = result.captionReady === true && result.code === "READY";
-      if (captionReady) { el("meeting").value = result.meetings[0].id; platform = result.platform === "Teams" ? "Teams" : "Google Meet"; }
+      if (captionReady) { el("meeting").value = result.meetings[0].id; platform = ["Teams", "Zoom"].includes(result.platform) ? result.platform : "Google Meet"; }
       status(!captionReady ? describe(result) : platform === "Teams"
         ? "準備OK（Teams）。Teamsのライブキャプション（字幕）をONにしてから、トークンを入力し、同意にチェックして「転送開始」を押してください。字幕がOFFの間は何も届きません。"
+        : platform === "Zoom"
+        ? "準備OK（Zoom）。Zoomの字幕（ライブトランスクリプション）を画面に表示してから、トークンを入力し、同意にチェックして「転送開始」を押してください。画面に出ている字幕だけを読みます。"
         : "準備OKです。トークンを入力し、同意にチェックして「転送開始」を押してください。");
     } catch (error) { if (run === generation) status(describe(error)); }
     finally { if (run === generation) controls(); }
