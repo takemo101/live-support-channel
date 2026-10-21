@@ -1,6 +1,6 @@
 # Live Support Channel：使い方と仕様
 
-バージョン：0.7.0。最終更新：2026-10-20。
+バージョン：0.7.0。最終更新：2026-10-21。
 
 > **試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire・合成した内部状態（Teamsの通話オブジェクト、Zoomのstore）、実HTTP／MCP通知を検証。実Meet・Teams・Zoom／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Meetは字幕通信の観測、Teamsは通話の字幕イベントの傍受、Zoomは字幕の内部状態（store）の購読です。
 
@@ -128,10 +128,6 @@ extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環�
 
 同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
 
-**実験オプション（パネルのチェックボックス、既定OFF）：字幕がOFFでも開始。** Teams：開始時に、通話の `startClosedCaption()` を、`closedCaptionsHaveBeenStarted()` が偽のときだけ1回呼ぶ（Teamsの状態を変える唯一の呼び出し）。字幕イベントのハンドラは字幕が動き出してから現れうるため、250msごと最大80回（約20秒）探して包み、見つからなければ `TEAMS_CALL_NOT_FOUND` で停止する。recoverは元の開始の設定を引き継ぐ。Zoomは字幕を開始する手段を実装しない（対象外）。Meetは次のとおり。
-
-**実験オプション（パネルのチェックボックス、既定OFF）：字幕ボタンOFFでの開始。** 例外としてこの時だけ、(1) `RTCDataChannel.prototype.send` を観測専用で包み、ラベルが `media-session` のMeet自身の制御フレーム（4096 bytes以下）から、コマンド番号`op`・ACK連番・字幕言語コード（`[A-Za-z]{2,3}(-…)`、32文字以下）の3値だけを保持する（他のラベルは中身に触れず、送信内容は変更しない）。(2) 字幕ボタンがOFFのstart時に限り、観測した言語と番号から `op+1` の字幕設定コマンド（BigPacket.envelope(1).command(2){op=1, captionUpdate=3{clientConfig=1{captionConfig=9{lang_1,lang_2}}, updateMask=2{paths=["client_config.caption_config"]}}}）と、ACK連番+1／+2の小フレーム（envelope(1).ack(1){seq=2, ok=3}）2つを、media-sessionチャネルへ**1チャネルにつき1回だけ**書き込む。再試行・Meet送信の書換えはしない。recoverでは書き込まず、元がassistedだった場合だけ字幕OFFを許容する。形式はTactiq 3.1.7185の静的解析（実行なし）による。media-sessionが特定できない／言語未観測／送信失敗は `MEDIA_SESSION_NOT_FOUND`／`CAPTION_LANGUAGE_UNKNOWN`／`CAPTION_ENABLE_FAILED`。**実Meetで未検証。連番の衝突などでMeetの制御通信を乱す恐れがあり、字幕設定がMeet側に残り得る。**非機密のテスト会議でのみ確認する。
-
 snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
 **Teams（通話の字幕イベントの傍受・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0のRTC `main-channel` 観測と、その後の画面字幕DOMの読取りは廃止した。Teamsのアプリが公開する通話の文脈（`window.msteamscalling` のWeakRef → `callingService.getActiveCall()`）から、データチャネルの購読 `remoteUserEventsReceived` のハンドラを探す（見つからなければ `TEAMS_CALL_NOT_FOUND`）。**開始後だけ**そのハンドラを包み、種別 `"3"` のJSON（`recognitionResults[]`、`timestampAudioSent`・`userId`・`text`）を読む。元のハンドラは常に呼び（例外はページへ伝えない）、終了・期限切れ・通話終了で元に戻す。包む前・停止後は何も処理しない。字幕の開始（`startClosedCaption()`）はせず、利用者がTeamsでONにする。話者は `userId`（内部ID）を出現順に匿名番号化し、名前は通話の参加者情報（`participants[].mri` → `displayName`）から、取れなければ匿名のまま。`timestampAudioSent` は数値（大きな整数を含む）または数字の文字列、各話者の最初の発話と、それ以前・同時刻の発話とその修正は履歴として送らない。使えない項目（必須項目の欠落・不正な型）は個別に捨てて数える（その数では停止しない）。通話が終われば `TEAMS_CALL_ENDED`。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**呼び出しの構造と形式はTactiq（解析）の仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると見つからず停止する。
@@ -142,7 +138,7 @@ snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはm
 
 正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert。遅れて届いた古いIDは新しい発話として扱い、同じ版で本文が新しければ置き換え、古い版は採用しない（停止しない）。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
 
-`hook-core.js` は全プラットフォーム共通の所有者・lease・終了状態・recoverの前提確認・コマンドの封筒だけを持ち、本文には触れない。manifestの各エントリは `js: [hook-core.js, <platform>-hook.js]` の順で、各hookがコアを一度だけ受け取って即座に消す（ページのスクリプトからは到達できず、コアが無いhookは何も入れない）。実Chromeでの拡張ロード時の実行順は未確認。
+`hook-core.js` は全プラットフォーム共通の所有者・lease・終了状態・recoverの前提確認・コマンドの封筒だけを持ち、本文には触れない。manifestの各エントリは `js: [hook-core.js, <platform>-hook.js]` の順で、Meetだけは `meet-wire.js`（protobufの読取り・字幕のdecode・構造の記述・ACKの符号化。ページにも状態にも触れない純関数）を間に挟む。各hookが、コア（Meetはwireも）を一度だけ受け取って即座に消す（ページのスクリプトからは到達できず、コアが無いhookは何も入れない）。実Chromeでの拡張ロード時の実行順は未確認。
 
 panel.jsは同意・UI・世代管理・heartbeat・蓄積・HTTP、stream.jsは差分／再送、devtools.jsは非表示停止。bin、server、Skillの既存責務とreadonly設定は維持する。
 
@@ -222,8 +218,7 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 | ZOOM_STORE_NOT_FOUND | 会議に参加し字幕（ライブトランスクリプション）をONにして「再確認」。見つからない場合はZoomの内部構造の変更を疑う |
 | RTC_CONNECTION_AMBIGUOUS | 接続を特定できないため取得しない |
 | RTC_PREPARE_FAILED／RTC_RESOURCE_LIMIT | 他の字幕拡張との競合・管理ポリシー・上限を確認。安全機能を無効化しない |
-| CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認。OFFのまま使うなら実験オプション |
-| MEDIA_SESSION_NOT_FOUND／CAPTION_LANGUAGE_UNKNOWN／CAPTION_ENABLE_FAILED | 実験オプション専用。制御チャネル未特定／言語未観測／送信失敗。再試行せず、字幕をONにするかページ再読み込み |
+| CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認 |
 | CAPTION_SUBSCRIPTION_FAILED | チャネル作成失敗。字幕・組織設定・拡張競合を確認 |
 | CAPTION_FORMAT_UNKNOWN | 想定外の構造で処理できなかった。本文／生パケットを共有せずコードと件数を報告 |
 | CAPTION_DECODE_BUSY | 前の取消不能読取りの終了待ち。待って再確認、止まる場合は非機密テストでページ再読み込み |

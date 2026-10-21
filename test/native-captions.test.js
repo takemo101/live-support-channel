@@ -27,7 +27,7 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
     }
     await rm(temp, { recursive: true, force: true });
   });
-  const hook = await readFile(new URL("../extension/hook-core.js", import.meta.url), "utf8") + "\n" + await readFile(new URL("../extension/meet-hook.js", import.meta.url), "utf8");
+  const hook = await readFile(new URL("../extension/hook-core.js", import.meta.url), "utf8") + "\n" + await readFile(new URL("../extension/meet-wire.js", import.meta.url), "utf8") + "\n" + await readFile(new URL("../extension/meet-hook.js", import.meta.url), "utf8");
   const streamSource = (await readFile(new URL("../extension/stream.js", import.meta.url), "utf8")).replace("export class CaptionStream", "class CaptionStream");
   const suite = async function (window, capture, ServerPeer) {
     let checks = 0, owner = "browser-capture-1", received = 0;

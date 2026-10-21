@@ -1,13 +1,12 @@
 // MAIN/document_start. No transcript processing while idle; no token, and no HTTP request of its own (Meet's own fetch responses are only read, from a clone).
 (() => {
-  const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
-  try { delete page.__liveCaptionsHookCore; } catch {}
-  if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "meet.google.com" || page[key]) return;
+  const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore, wire = page.__liveCaptionsMeetWire;
+  try { delete page.__liveCaptionsHookCore; delete page.__liveCaptionsMeetWire; } catch {}
+  if (typeof core !== "function" || typeof wire !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "meet.google.com" || page[key]) return;
   const NativePeer = page.RTCPeerConnection, create = NativePeer?.prototype?.createDataChannel;
   const { Uint8Array: Bytes, ArrayBuffer: Buffer, TextDecoder: Decoder, Blob: BinaryBlob, DecompressionStream: Inflate } = page, nativeFetch = page.fetch, nativeAtob = page.atob;
   const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
   const LIMIT = 262144, ACK_LIMIT = 16384, peers = new Set(), tracked = new WeakMap();
-  const NativeChannel = page.RTCDataChannel?.prototype, nativeSend = NativeChannel?.send, mediaSeen = new WeakMap(), mediaWritten = new WeakSet();
   const captionLabels = new Set(["captions", "captions_v2"]);
   let prepareError = null, decoding = null;
   const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -23,7 +22,7 @@
   const life = core(page, {
     meeting: currentMeeting,
     inFlight: s => decoding === s ? 1 : 0,
-    check(s) { const code = captionControl(); return code === "READY" || (s.assisted && code === "CAPTIONS_OFF") ? null : code; },
+    check() { const code = captionControl(); return code === "READY" ? null : code; },
     cleanup(s) {
       for (const job of s.queue) job.data = null;
       s.queue.length = 0; s.stats.queued = 0;
@@ -35,100 +34,7 @@
     },
   });
   const { finish, valid } = life;
-  function varint(bytes, cursor) {
-    let value = 0n;
-    for (let i = 0; i < 10; i++) {
-      if (cursor.pos >= bytes.length) invalid();
-      const b = bytes[cursor.pos++]; if (i === 9 && b > 1) invalid();
-      value |= BigInt(b & 127) << BigInt(i * 7);
-      if (!(b & 128)) return value;
-    }
-    invalid();
-  }
-  function fields(bytes) {
-    const out = new Map(), cursor = { pos: 0 };
-    while (cursor.pos < bytes.length) {
-      const tag = varint(bytes, cursor); if (tag > 0xffffffffn) invalid();
-      const field = Number(tag >> 3n), wire = Number(tag & 7n);
-      if (!field || out.has(field) || out.size >= 64) invalid();
-      let value;
-      if (wire === 0) value = varint(bytes, cursor);
-      else {
-        let length;
-        if (wire === 2) { const n = varint(bytes, cursor); if (n > BigInt(LIMIT)) invalid(); length = Number(n); }
-        else if (wire === 1) length = 8;
-        else if (wire === 5) length = 4;
-        else invalid();
-        if (cursor.pos + length > bytes.length) invalid();
-        value = bytes.subarray(cursor.pos, cursor.pos + length); cursor.pos += length;
-      }
-      out.set(field, { wire, value });
-    }
-    return out;
-  }
-  function get(map, field, wire, optional = false) {
-    const item = map.get(field); if (!item && optional) return null;
-    if (!item || item.wire !== wire) invalid(); return item.value;
-  }
-  // Decoding follows protobuf semantics (unknown fields skipped, a repeated field keeps its last value, zero-valued fields are absent on the wire),
-  // like the app's own decoder. A frame that is not a usable caption is dropped and counted, never fatal: only a stream of nothing usable stops the capture.
-  function scan(bytes) {
-    const out = new Map(), cursor = { pos: 0 };
-    while (cursor.pos < bytes.length) {
-      const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
-      if (!field) invalid();
-      let value;
-      if (wire === 0) value = varint(bytes, cursor);
-      else if (wire === 1 || wire === 2 || wire === 5) {
-        let length = wire === 1 ? 8 : 4;
-        if (wire === 2) { const n = varint(bytes, cursor); if (n > BigInt(LIMIT)) invalid(); length = Number(n); }
-        if (cursor.pos + length > bytes.length) invalid();
-        value = bytes.subarray(cursor.pos, cursor.pos + length); cursor.pos += length;
-      } else invalid();
-      out.set(field, { wire, value });
-    }
-    return out;
-  }
-  const part = (map, field, wire) => { const item = map.get(field); return item && item.wire === wire ? item.value : null; };
-  function text(bytes, max) {
-    const value = new Decoder("utf-8").decode(bytes);
-    if (value.length > max) fail("CAPTION_LIMIT"); return value;
-  }
-  // Returns a packet, null for a control frame, or the reason ("frame", "utterance", "device", "id") why the frame is not a usable caption.
-  function decode(bytes, label) {
-    let id, revision, device, body;
-    try {
-      const outer = scan(bytes);
-      if (label === "captions") {
-        if (part(outer, 2, 2)?.length) return null;
-        const message = part(outer, 1, 2); if (!message) return "utterance";
-        const fields = scan(message);
-        device = part(fields, 1, 2); id = part(fields, 2, 0); revision = part(fields, 3, 0) ?? 0n; body = part(fields, 6, 2);
-      } else {
-        const message = part(outer, 1, 2); if (!message) return "utterance";
-        // The real wire (seen on Meet, structure only) nests the utterance one level deeper: {1: {1: id, 2: version, 3: caption}, 6: {...}}. The app's own
-        // decoder reads a field by number whatever its wire type, so it flattens that nesting by accident; we open it explicitly (at most twice).
-        let fields = scan(message);
-        for (let depth = 0; depth < 2 && !part(fields, 3, 2); depth++) { const wrapped = part(fields, 1, 2); if (!wrapped) break; fields = scan(wrapped); }
-        const caption = part(fields, 3, 2); if (!caption) return "utterance";
-        id = part(fields, 1, 0); revision = part(fields, 2, 0) ?? 0n;
-        const inner = scan(caption); device = part(inner, 6, 2); body = part(inner, 3, 2);
-      }
-    } catch { return "frame"; }
-    if (id === null || id < 1n || id > 0x7fffffffffffffffn || revision > BigInt(Number.MAX_SAFE_INTEGER)) return "id";
-    if (!device || device.length > 2048) return "device";
-    const deviceId = text(device, 512);
-    if (!deviceId || /\p{Cc}/u.test(deviceId)) return "device";
-    return { id, revision: Number(revision), device: deviceId, text: body === null ? null : text(body, 32768) };
-  }
-  function integer(value) {
-    const out = []; do { const b = Number(value & 127n); value >>= 7n; out.push(b | (value ? 128 : 0)); } while (value);
-    return out;
-  }
-  function ack(id, revision) {
-    const ref = [8, ...integer(id), 16, ...integer(BigInt(revision)), 24, 1];
-    const body = [10, ref.length, ...ref]; return Bytes.from([10, body.length, ...body]);
-  }
+  const { scan, part, text, decode, integer, ack, items, walk, shapeOf } = wire({ Bytes, Decoder, LIMIT });
   function payloadSize(data) {
     let size;
     if (data instanceof BinaryBlob) size = data.size;
@@ -215,27 +121,6 @@
   // later start would never see it. Only (device id, sanitised name) pairs are kept, in memory, at most 256, and nothing is sent before consent.
   const roster = new Map();
   const deviceKey = id => String(id).replace(/^@/, "");
-  function items(bytes) {
-    const out = []; const cursor = { pos: 0 };
-    while (cursor.pos < bytes.length) {
-      const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
-      if (!field) invalid();
-      if (wire === 0) { varint(bytes, cursor); continue; }
-      let length;
-      if (wire === 2) { const n = varint(bytes, cursor); if (n > BigInt(LIMIT)) invalid(); length = Number(n); }
-      else if (wire === 1) length = 8; else if (wire === 5) length = 4; else invalid();
-      if (cursor.pos + length > bytes.length) invalid();
-      if (wire === 2) out.push({ field, value: bytes.subarray(cursor.pos, cursor.pos + length) });
-      cursor.pos += length;
-    }
-    return out;
-  }
-  // Follows a path of length-delimited field numbers; a repeated field fans out.
-  function walk(bytes, path) {
-    let layer = [bytes];
-    for (const field of path) { const next = []; for (const part of layer) for (const item of items(part)) if (item.field === field) next.push(item.value); layer = next.slice(0, 256); }
-    return layer;
-  }
   function note(device) {
     let id = "", name = "";
     for (const item of items(device)) {
@@ -327,26 +212,6 @@
     const device = deviceKey(speaker.device);
     return roster.get(device) || (selfDevice && device === selfDevice ? "あなた（自分）" : `話者 ${speaker.number}（名前未確認）`);
   };
-  // Structure only (field numbers and wire types, never values): lets a mismatch with the real wire be diagnosed without any caption text.
-  // A length-delimited field is opened only if it holds a control byte, which plain text never does.
-  function shapeOf(bytes, depth = 5) {
-    const parts = [], cursor = { pos: 0 };
-    try {
-      while (cursor.pos < bytes.length && parts.length < 12) {
-        const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
-        if (!field || field > 1000) { parts.push("!"); break; }
-        if (wire === 0) { varint(bytes, cursor); parts.push(field + ":0"); }
-        else if (wire === 1 || wire === 5) { cursor.pos += wire === 1 ? 8 : 4; if (cursor.pos > bytes.length) { parts.push("!"); break; } parts.push(field + ":" + wire); }
-        else if (wire === 2) {
-          const length = Number(varint(bytes, cursor)); if (cursor.pos + length > bytes.length) { parts.push("!"); break; }
-          const inner = bytes.subarray(cursor.pos, cursor.pos + length); cursor.pos += length;
-          const nested = depth > 1 && length > 1 && inner.some(b => b < 0x20) ? shapeOf(inner, depth - 1) : "";
-          parts.push(field + ":2" + (nested && !nested.includes("!") ? "(" + nested + ")" : ""));
-        } else { parts.push("!"); break; }
-      }
-    } catch { parts.push("!"); }
-    return parts.join(",");
-  }
   // Subscribes with channels of our own, the way the app's own client does (both profiles, ordered, limited retransmits), when Meet has none to observe.
   function subscribe(s) {
     const target = s.connection;
@@ -442,56 +307,9 @@
     }
     return [];
   }
-  // Opt-in only. Observes Meet's own media-session control frames (numbers and a language code, nothing else is kept)
-  // so that one caption-config command can be written when the caption button is OFF.
-  const child = (data, field) => data ? get(fields(data), field, 2, true) : null;
-  function observeMedia(channel, data) {
-    if (channel.label !== "media-session") return;
-    let view;
-    if (data instanceof Buffer) view = new Bytes(data); else if (Buffer.isView(data)) view = new Bytes(data.buffer, data.byteOffset, data.byteLength); else return;
-    if (view.length > 4096) return;
-    const seen = mediaSeen.get(channel) ?? { op: 0, ack: 0, language: null };
-    try {
-      const command = child(child(view, 1), 2);
-      const op = command ? get(fields(command), 1, 0, true) : null;
-      if (op !== null && op < 0xfffffff0n) seen.op = Number(op);
-      const code = child(child(child(child(command, 3), 1), 9), 1);
-      if (code) { const language = text(code, 32); if (/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(language)) seen.language = language; }
-    } catch {}
-    try {
-      const ackBody = child(child(view, 1), 1);
-      const sequence = ackBody ? get(fields(ackBody), 2, 0, true) : null;
-      if (sequence !== null && sequence < 0xfffffff0n) seen.ack = Number(sequence);
-    } catch {}
-    mediaSeen.set(channel, seen);
-  }
-  const lengthDelimited = (field, body) => [(field << 3) | 2, ...integer(BigInt(body.length)), ...body];
-  const numberField = (field, value) => [field << 3, ...integer(BigInt(value))];
-  const stringField = (field, value) => lengthDelimited(field, [...value].map(c => c.charCodeAt(0)));
-  function assistTarget(connection) {
-    const entries = [...connection.channels].filter(entry => !entry.owned && entry.label === "media-session" && entry.channel.readyState === "open");
-    if (entries.length !== 1 || typeof nativeSend !== "function") return { code: "MEDIA_SESSION_NOT_FOUND" };
-    const seen = mediaSeen.get(entries[0].channel);
-    return seen?.language ? { channel: entries[0].channel, seen } : { code: "CAPTION_LANGUAGE_UNKNOWN" };
-  }
-  // One attempt per media-session channel, no retry, no rewrite of Meet's own frames. Returns a failure code or null.
-  function enableCaptions(s) {
-    if (captionControl() !== "CAPTIONS_OFF") return null;
-    const target = assistTarget(s.connection); if (target.code) { finish(target.code); return target.code; }
-    const { channel, seen } = target; if (mediaWritten.has(channel)) return null;
-    mediaWritten.add(channel);
-    const config = [...stringField(1, seen.language), ...stringField(2, seen.language)];
-    const update = [...lengthDelimited(1, lengthDelimited(9, config)), ...lengthDelimited(2, stringField(1, "client_config.caption_config"))];
-    const frames = [lengthDelimited(1, lengthDelimited(2, [...numberField(1, seen.op + 1), ...lengthDelimited(3, update)])),
-      ...[1, 2].map(n => lengthDelimited(1, lengthDelimited(1, [...numberField(2, seen.ack + n), ...numberField(3, 1)])))];
-    try { for (const frame of frames) nativeSend.call(channel, Bytes.from(frame)); }
-    catch { finish("CAPTION_ENABLE_FAILED"); return "CAPTION_ENABLE_FAILED"; }
-    return life.current === s ? null : "CAPTURE_CHANGED";
-  }
-  function metadata(assist = false) {
+  function metadata() {
     const id = currentMeeting(), choices = candidates(), selected = choices.length === 1 ? choices[0] : null;
     let code = prepareError ?? (id ? captionControl() : "NOT_MEETING_PAGE");
-    if (assist && code === "CAPTIONS_OFF") code = selected ? (assistTarget(selected).code ?? "READY") : "READY";
     if (code === "READY" && !selected) code = choices.length > 1 ? "RTC_CONNECTION_AMBIGUOUS" : "RTC_CONNECTION_NOT_FOUND";
     if (code === "READY" && decoding && !life.current) code = "CAPTION_DECODE_BUSY";
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
@@ -500,21 +318,20 @@
       diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, names: roster.size, rosterRpc: rosterStats.rpc, rosterSync: rosterStats.sync, rosterSyncNames: rosterStats.syncNames, rosterChannel: rosterStats.channel, selfKnown: selfDevice ? 1 : 0, ...(rosterStats.shape ? { rosterShape: rosterStats.shape } : {}), profile: life.current?.selected?.label ?? "pending" } };
   }
   function command(params = {}) {
-    const { action, meetingId, captureId, assistCaptions } = params;
-    const early = life.prologue(params, () => metadata(assistCaptions === true)); if (early) return early;
+    const { action, meetingId, captureId } = params;
+    const early = life.prologue(params, metadata); if (early) return early;
     if (action === "start" || action === "recover") {
-      const assisted = action === "recover" ? life.terminal.assisted === true : assistCaptions === true;
-      const meta = metadata(assisted); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
+      const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
       const retired = finish("CAPTURE_REPLACED");
       if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
       if (decoding) return { status: "unavailable", code: "CAPTION_DECODE_BUSY" };
-      const ready = metadata(assisted), choices = candidates();
+      const ready = metadata(), choices = candidates();
       if (life.generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
       if (currentMeeting() !== meetingId) return { status: "ended", code: "MEETING_CHANGED" };
       if (!ready.captionReady) return { status: "unavailable", code: ready.code };
       if (choices.length !== 1) return { status: "unavailable", code: choices.length > 1 ? "RTC_CONNECTION_AMBIGUOUS" : "RTC_CONNECTION_NOT_FOUND" };
       const target = choices[0]; life.clearTerminal();
-      const s = { owner: captureId, meetingId, connection: target, assisted, entries: new Set(), selected: null,
+      const s = { owner: captureId, meetingId, connection: target, entries: new Set(), selected: null,
         records: new Map(), speakers: new Map(), characters: 0, started: now(), queue: [], reader: null,
         stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0, shapes: [] } };
       life.activate(s);
@@ -525,7 +342,6 @@
         if (life.current !== s) return { status: "ended", code: "CAPTURE_CHANGED" };
         finish("CAPTION_SUBSCRIPTION_FAILED"); return { status: "unavailable", code: "CAPTION_SUBSCRIPTION_FAILED" };
       }
-      if (assisted && action === "start") { const code = enableCaptions(s); if (code) return { status: code === "CAPTURE_CHANGED" ? "ended" : "unavailable", code }; }
     }
     return life.epilogue(params, { platform: "Google Meet", blocks: s => [...s.records.values()].flatMap(r => r.block ? [{ ...r.block, speakerName: nameOf(r.speaker) }] : []) });
   }
@@ -542,9 +358,6 @@
       try { track(peer); } catch { prepareError = "RTC_PREPARE_FAILED"; }
       return peer;
     } });
-    if (typeof nativeSend === "function") try {
-      NativeChannel.send = function (...args) { try { observeMedia(this, args[0]); } catch {} return nativeSend.apply(this, args); };
-    } catch {}
   } catch { prepareError = "RTC_PREPARE_FAILED"; }
   if (typeof nativeFetch === "function" && typeof nativeAtob === "function") try {
     page.fetch = function (...args) {

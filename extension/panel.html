@@ -15,38 +15,57 @@
     </header>
     <p id="status" role="status" aria-live="polite">字幕（Meetの字幕／Teamsのライブキャプション／Zoomの字幕）がONの会議タブで、このパネルを開いたまま使います。</p>
     <section id="setup">
-      <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
-      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="live-support token の値">
-      <label for="meeting">会議</label>
-      <div class="row">
-        <select id="meeting"><option value="">未確認（再確認を押してください）</option></select>
-        <button id="refresh" type="button">再確認</button>
-      </div>
-      <label for="batch">転送のまとめ方</label>
-      <select id="batch">
-        <option value="pause" selected>発話の区切りごと（1.2秒静かになったら／最大10秒）</option>
-        <option value="30">約30秒ごと</option>
-        <option value="5">約5秒ごと（細かく）</option>
-      </select>
-      <label class="consent"><input id="consent" type="checkbox">参加者の同意・組織の規程・送信先AIのデータ取扱い（字幕本文と話者の表示名が送られます）を確認しました</label>
-      <label class="consent"><input id="shots" type="checkbox" checked>会議画面のスクリーンショットも、字幕と一緒に自動で送る（顔・名前・共有資料が写り、Anthropicへ送られます。画面が変わったときだけ。会議タブが前面のときだけ撮ります）</label>
-      <label class="consent"><input id="assist" type="checkbox">実験：字幕がOFFでも開始する（Meetは字幕設定を1回だけ書き込み、Teamsは字幕を自動で開始します。Zoomは対象外。既定OFF・再試行なし）</label>
+      <fieldset class="card">
+        <legend><span class="step">1</span>つなぐ</legend>
+        <label for="token">ペアリングトークン <small>（このブラウザの起動中だけ記憶）</small></label>
+        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="live-support token の値">
+        <label for="meeting">会議</label>
+        <div class="row">
+          <select id="meeting"><option value="">未確認（再確認を押してください）</option></select>
+          <button id="refresh" type="button">再確認</button>
+        </div>
+      </fieldset>
+      <fieldset class="card">
+        <legend><span class="step">2</span>送る内容を確認する</legend>
+        <label class="check"><input id="consent" type="checkbox"><span><strong>必須：</strong>参加者の同意・組織の規程・送信先AIのデータ取扱いを確認しました。字幕本文と話者の表示名が、Claude Code（Anthropic）へ送られます。</span></label>
+        <label class="check"><input id="shots" type="checkbox" checked><span>会議画面のスクリーンショットも送る。<small>顔・名前・共有資料が写ります。会議タブが前面のときだけ、画面が変わったときだけ撮ります。</small></span></label>
+      </fieldset>
+      <details class="card">
+        <summary>詳細設定</summary>
+        <label for="batch">転送のまとめ方</label>
+        <select id="batch">
+          <option value="pause" selected>発話の区切りごと（1.2秒静かになったら／最大10秒）</option>
+          <option value="30">約30秒ごと</option>
+          <option value="5">約5秒ごと（細かく）</option>
+        </select>
+      </details>
     </section>
     <div class="actions">
       <button id="start" class="primary" type="button" disabled>転送開始</button>
       <button id="pause" type="button" disabled hidden>一時停止</button>
       <button id="stop" type="button" disabled hidden>停止（未送信分を破棄）</button>
     </div>
-    <details>
+    <details class="notes">
       <summary>仕組みと注意事項</summary>
+      <h3>送られるもの</h3>
       <ul>
-        <li>Meet・Teams・Zoom（Webクライアント）の字幕を、発話の区切りごと（既定。1.2秒静かになるか最大10秒で）または約30秒／約5秒ごとにまとめて、ローカルのClaude Codeへ渡す試験版です。Tactiq・録音・新しい音声認識は使いません。Tactiqの一時停止とは連動しません。</li>
-        <li>会議参加前に拡張を準備してください。更新時は会議タブを閉じて開き直して参加し、字幕のONはユーザーが行います。Meetは字幕通信（データチャネル）の観測、Teamsは通話の字幕イベントの傍受、Zoomは字幕の内部状態（store）の購読です（どれも読み取りで、画面は書き換えません。字幕の開始はしません）。</li>
-        <li>転送した字幕と、チェックがONなら会議画面のスクリーンショット（会議タブが前面のときだけ、画面が変わったときだけ）は、Claude Codeを通じてAnthropicへ送信されます。同意後だけ本文を処理し、Meetでは必要時に既存の会議接続へ自分の字幕チャネルを追加して受信確認を返します。</li>
-        <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。話者は会議サービスが持つ表示名で識別し（読み取れない間は「話者1（名前未確認）」）、相手の表示名もAnthropicへ送られます。Meetでは名簿（デバイスと表示名の対応）を、同意前からメモリ上にだけ保持します。</li>
+        <li>転送した字幕と話者の表示名、チェックがONなら会議画面のスクリーンショットが、ローカルのClaude Codeを通じてAnthropicへ送信されます。送信済みのデータは取り消せません。</li>
+        <li>同意後だけ本文を処理します。Meetでは、話者名のための名簿（デバイスと表示名の対応）を、同意前からメモリ上にだけ保持します。</li>
+      </ul>
+      <h3>取得の仕組み</h3>
+      <ul>
+        <li>字幕のONは、利用者が会議サービス側で行います。拡張は字幕を開始・変更せず、読み取るだけです。Tactiq・録音・新しい音声認識は使いません。</li>
+        <li>Meetは字幕通信（データチャネル）の観測、Teamsは通話の字幕イベントの傍受、Zoomは字幕の内部状態（store）の購読です。会議参加前に拡張を準備し、更新後は会議タブを閉じて開き直してから参加してください。</li>
+      </ul>
+      <h3>動作</h3>
+      <ul>
+        <li>開始・再開・自動復旧の直後は、各話者の最初の発言以前を送りません（遅配と履歴を完全には区別できません）。話者は会議サービスの表示名で識別し、読み取れない間は「話者N（名前未確認）」です。</li>
         <li>読取りが約2秒途切れても自動で復旧しますが、途切れた間の字幕は取得できません。手動で停止・一時停止した後は自動再開しません。</li>
-        <li>一時停止で未処理分は破棄し、新しい字幕は処理・保持・送信しません。送信済みのデータは取り消せません。</li>
-        <li>実会議での互換性は未確認です（Teams・Zoomは実機未検証）。Zoomのデスクトップ版は対象外です。このパネルを離れると停止します。</li>
+        <li>一時停止で未処理分は破棄し、新しい字幕は処理・保持・送信しません。このパネルを離れると停止します。</li>
+      </ul>
+      <h3>制限</h3>
+      <ul>
+        <li>実会議での互換性は未確認です（Teams・Zoomは実機未検証）。Zoom／Teamsのデスクトップ版は対象外です。</li>
       </ul>
     </details>
   </main>
