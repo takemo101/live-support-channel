@@ -8,9 +8,9 @@ class Element extends EventTarget {
   replaceChildren(...children) { this.children = children; this.value = ""; }
   click() { if (!this.disabled) this.dispatchEvent(new Event("click")); }
 }
-function setup(t, fetcher, storage) {
-  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "assist", "batch"].map(id => [id, new Element()]));
-  elements.batch.value = "pause"; elements.token.value = "t".repeat(43); elements.consent.checked = true;
+function setup(t, fetcher, storage, screenshot) {
+  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "assist", "batch", "shots"].map(id => [id, new Element()]));
+  elements.batch.value = "pause"; elements.shots.checked = true; elements.token.value = "t".repeat(43); elements.consent.checked = true;
   const block = { messageId: "m", messageVersion: 1, speakerName: "Demo", transcript: "private baseline", timestamp: 100, version: 1 };
   const fixture = { captionReady: true, error: undefined, snapshot: { status: "live", meetingId: "meet.google.com/abc-defg-hij", platform: "Google Meet", blocks: [block] } };
   const calls = [], contexts = [], actions = [], navigation = new Set();
@@ -30,7 +30,7 @@ function setup(t, fetcher, storage) {
   const panel = createPanel({
     document: { getElementById: id => elements[id], createElement: () => new Element() }, inspectedWindow, onNavigated,
     fetch: async (url, options) => { calls.push({ url, options }); return fetcher ? fetcher(url, options) : { ok: true, status: 202 }; },
-    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage, now: () => clock.t,
+    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage, screenshot, now: () => clock.t,
   });
   t.after(() => panel.dispose());
   return { elements, block, fixture, calls, contexts, actions, navigation, clock,
@@ -452,4 +452,65 @@ test("Meet's drop reasons and caption profile are shown as whitelisted counters 
   for (const part of [/不正=60/, /形式不正=3/, /発話なし=50/, /話者ID不正=7/, /方式=captions_v2/]) assert.match(s.elements.status.textContent, part);
   s.fixture.diagnostics = { profile: "<script>PRIVATE" }; s.elements.refresh.click(); await turn();
   assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("方式="));
+});
+
+// --- screenshots
+const fakeShot = (value, bytes = Uint8Array.of(0xff, 0xd8, 0xff, value)) => ({ bytes, signature: new Uint8Array(576).fill(value) });
+const urls = (s, part) => s.calls.filter(c => c.url.includes(part));
+function shooter(...shots) { const queue = [...shots]; const fn = async () => { fn.calls++; const next = queue.length > 1 ? queue.shift() : queue[0]; if (next instanceof Error) throw next; return next; }; fn.calls = 0; return fn; }
+
+test("each batch uploads a screenshot of the meeting right before it, tied to the batch's session and sequence", async t => {
+  const shot = shooter(fakeShot(10));
+  const s = setup(t, undefined, undefined, shot); await start(s); fresh(s, "a", "first words"); await s.poll();
+  const order = s.calls.filter(c => c.options.method === "POST").map(c => c.url.replace("http://127.0.0.1:43821", "").split("?")[0]);
+  assert.deepEqual(order, ["/screenshots", "/captions"], "the screenshot goes first so the batch's event can carry it");
+  const [upload] = urls(s, "/screenshots"), body = JSON.parse(urls(s, "/captions")[0].options.body);
+  assert.equal(upload.options.headers["content-type"], "image/jpeg"); assert.match(upload.options.headers.authorization, /^Bearer /);
+  assert.equal(new URL(upload.url).searchParams.get("sessionId"), body.sessionId); assert.equal(new URL(upload.url).searchParams.get("sequence"), String(body.sequence));
+  assert.deepEqual([...upload.options.body], [0xff, 0xd8, 0xff, 10]);
+  assert.match(s.elements.status.textContent, /画像=1/);
+});
+test("a screen that has not changed is not uploaded again; a changed one is", async t => {
+  const shot = shooter(fakeShot(10), fakeShot(11), fakeShot(200));
+  const s = setup(t, undefined, undefined, shot); await start(s);
+  fresh(s, "a", "one"); await s.poll(); fresh(s, "b", "two"); await s.poll(); fresh(s, "c", "three"); await s.poll();
+  assert.equal(shot.calls, 3, "every batch looks at the screen");
+  assert.equal(urls(s, "/screenshots").length, 2, "the near-identical second picture is skipped, the changed third is sent");
+  assert.equal(urls(s, "/captions").length, 3);
+});
+test("a screenshot problem of any kind never blocks or stops the captions", async t => {
+  for (const [name, screenshot, fetcher] of [
+    ["capture throws", shooter(new Error("no permission")), undefined],
+    ["nothing captured", shooter(null), undefined],
+    ["empty image", shooter({ bytes: new Uint8Array(0), signature: new Uint8Array(576) }), undefined],
+    ["upload rejected", shooter(fakeShot(10)), url => url.includes("/screenshots") ? { ok: false, status: 400 } : { ok: true, status: 202 }],
+    ["upload server error", shooter(fakeShot(10)), url => url.includes("/screenshots") ? { ok: false, status: 500 } : { ok: true, status: 202 }],
+    ["upload network failure", shooter(fakeShot(10)), url => { if (url.includes("/screenshots")) throw new Error("offline"); return { ok: true, status: 202 }; }],
+  ]) {
+    const s = setup(t, fetcher, undefined, screenshot); await start(s); fresh(s, "a", "still sent"); await s.poll();
+    assert.equal(urls(s, "/captions").length, 1, name); assert.match(s.elements.state.textContent, /取得中/, name);
+  }
+});
+test("a resent batch neither takes nor uploads its screenshot again once the receiver has it", async t => {
+  let fail = true;
+  const shot = shooter(fakeShot(10), fakeShot(99));
+  const s = setup(t, url => url.endsWith("/health") || url.includes("/screenshots") || !fail ? { ok: true, status: 202 } : { ok: false, status: 503 }, undefined, shot);
+  await start(s); fresh(s, "a", "retry me"); await s.capture(); await s.tick(5000); assert.equal(urls(s, "/captions").length, 1);
+  fail = false; await s.tick(5000);
+  assert.equal(urls(s, "/captions").length, 2); assert.equal(shot.calls, 1, "one picture per batch, even across resends");
+  assert.equal(urls(s, "/screenshots").length, 1, "an uploaded picture is not uploaded again; the receiver keeps it for the resend");
+});
+test("with the checkbox off, or no screenshot support, nothing is captured or uploaded", async t => {
+  const shot = shooter(fakeShot(10));
+  const off = setup(t, undefined, undefined, shot); off.elements.shots.checked = false; await start(off); fresh(off, "a", "no picture"); await off.poll();
+  assert.equal(shot.calls, 0); assert.equal(urls(off, "/screenshots").length, 0); assert.equal(urls(off, "/captions").length, 1);
+  const none = setup(t); await start(none); fresh(none, "a", "no picture"); await none.poll(); assert.equal(urls(none, "/screenshots").length, 0);
+});
+test("a screenshot whose upload failed is offered again with the resend, still from the same picture", async t => {
+  let fail = true;
+  const shot = shooter(fakeShot(10), fakeShot(99));
+  const s = setup(t, url => url.includes("/screenshots") ? { ok: !fail, status: fail ? 503 : 202 } : url.endsWith("/health") || !fail ? { ok: true, status: 202 } : { ok: false, status: 503 }, undefined, shot);
+  await start(s); fresh(s, "a", "retry me"); await s.capture(); await s.tick(5000);
+  fail = false; await s.tick(5000);
+  assert.equal(shot.calls, 1); assert.equal(urls(s, "/screenshots").length, 2); assert.equal(urls(s, "/captions").length, 2);
 });

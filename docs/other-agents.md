@@ -43,6 +43,10 @@ agy にはセッションへ外部のメッセージを押し込む仕組みが�
 
 `LIVE_SUPPORT_TOOLS=1` のとき、サーバーはChannelsの通知を送らず、最新200件までのバッチを保持して `get_captions` で返します（1回に約200KBまで。残りは `more: true`）。このオプションなしの挙動（Claude Code用）は変わりません。
 
+## 画面のスクリーンショット
+
+パネルの「スクリーンショットも送る」がONなら、字幕の更新（omp・pi は届くメッセージ、agy は `get_captions` の結果）に `screenshot`（JPEGの絶対パス）が付くことがあります。エージェントがそのファイルを読めれば使えます。omp・pi は通常そのまま読めます。agy は、`~/.live-support-screens` をワークスペースに足してください（`agy --add-dir ~/.live-support-screens`）。Claude Code は `live-support claude` が `--add-dir` で渡します。実エージェントでの画像の読取りは未確認です。
+
 ## 共通の注意
 
 - **Claude Code用の読取り専用の制限（ツールの限定、`--restricted`）は、他のエージェントでは再現していません。** 各エージェントの権限・ツールの設定で絞ってください。字幕は非信頼のデータで、プロンプトインジェクションの保証はありません。

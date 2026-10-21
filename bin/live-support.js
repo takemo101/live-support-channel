@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { runtimeDirectory } from "../server/runtime.js";
+import { runtimeDirectory, screenshotDirectory } from "../server/runtime.js";
 import { prepareToken, renewToken } from "../server/token.js";
 
 const help = `Live Support — meeting captions (Meet, Teams, Zoom) to one coding-agent session at a time
@@ -103,10 +103,15 @@ async function main() {
     checkCancellation();
     await renewToken(directory);
     checkCancellation();
+    // Meeting-screen screenshots land here and nowhere else; the agent may read this directory (not the runtime directory that holds the token).
+    const screens = screenshotDirectory();
+    await mkdir(screens, { recursive: true, mode: 0o700 });
+    for (const name of await readdir(screens)) if (/^([\da-f-]{36}-\d+\.jpg|\.tmp-[\da-f-]{36})$/.test(name)) await rm(join(screens, name), { force: true });
+    checkCancellation();
     const config = { mcpServers: { "live-support": {
       command: process.execPath,
       args: [fileURLToPath(new URL("../server/main.js", import.meta.url))],
-      env: { LIVE_SUPPORT_RUNTIME_DIR: directory },
+      env: { LIVE_SUPPORT_RUNTIME_DIR: directory, LIVE_SUPPORT_SCREENSHOT_DIR: screens },
     } } };
     const pluginRoot = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
     const skillPath = join(pluginRoot, "skills/meeting/SKILL.md");
@@ -130,7 +135,7 @@ async function main() {
     child = spawn("claude", [
       "--mcp-config", JSON.stringify(config), "--strict-mcp-config",
       "--tools", "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
-      "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
+      "--add-dir", screens, "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
       "--append-system-prompt-file", skillPath,
       "--dangerously-load-development-channels", "server:live-support", "--",
       "会議サポートモードを開始してください。まず本人の会議での表示名を確認し、このプロジェクトのCLAUDE.mdと必要な資料だけを読み取り、短く準備状況を伝えて字幕を待ってください。以後は字幕の変化に応じて、skillの書式（要点・相手の問い・返答案・提案）で、本人の発言を除き、字幕の不完全さに注意しながら日本語で短く更新してください。",
