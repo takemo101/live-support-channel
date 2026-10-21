@@ -521,7 +521,7 @@ const SYNC = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingSpaceSe
 const DEVICE = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice";
 const base64 = data => Buffer.from(data).toString("base64");
 const collection = devices => blob(2, blob(2, bytes(...devices.map(([id, name]) => blob(2, bytes(string(1, id), string(2, name)))))));
-const answer = (url, body, extra = {}) => { const response = { url, ok: true, text: async () => assert.fail("the page's own response must not be consumed"), clone: () => ({ text: async () => body }), ...extra }; return response; };
+const answer = (url, body, extra = {}) => { const response = { url, ok: true, text: async () => assert.fail("the page's own response must not be consumed"), clone: () => ({ arrayBuffer: async () => (body instanceof Uint8Array ? body : new TextEncoder().encode(body)).slice().buffer }), ...extra }; return response; };
 const settle = () => new Promise(r => setTimeout(r, 10));
 async function speak(f, device, text, id) { f.channel.message(packet(id, "baseline", 1, device)); await f.drain(); f.channel.message(packet(id + 1, text, 1, device)); await f.drain(); }
 
@@ -551,4 +551,22 @@ test("fetch observation never touches other URLs, failed responses or errors", a
   await assert.rejects(f.page.fetch("boom"), /network/); await settle();
   assert.deepEqual(seen, ["https://example.com/x", SYNC, { url: DEVICE }, "fail", "boom"]);
   assert.equal(f.command("discover").diagnostics.names, 0);
+});
+
+test("the device list is read from a plain protobuf body and from a relative or query-carrying URL; the panel counters say what was read", async t => {
+  const f = fixture(t), body = collection([["spaces/s/devices/dave", "Dave"]]);
+  const seen = []; f.page.fetchImpl = async (...args) => { seen.push(args[0]); return answer(String(args[0]), body); };
+  await f.page.fetch("/$rpc/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections?alt=proto"); await settle();
+  const d = plain(f.command("discover").diagnostics);
+  assert.equal(d.names, 1); assert.equal(d.rosterSync, 1); assert.equal(d.rosterSyncNames, 1); assert.equal(d.rosterRpc, 1); assert.equal(d.selfKnown, 0); assert.equal(d.rosterShape, undefined);
+  f.command("start"); await speak(f, "spaces/s/devices/dave", "hi", 1);
+  assert.equal(plain(f.command("read").blocks.at(-1).speakerName), "Dave");
+  await f.page.fetch("https://evil.example/$rpc/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections"); await settle();
+  assert.equal(plain(f.command("discover").diagnostics).rosterRpc, 1, "other hosts are not Meet's calls");
+});
+test("a device-list response that yields no names is reported by structure only", async t => {
+  const f = fixture(t); f.page.fetchImpl = async url => answer(url, base64(blob(5, bytes(string(1, "SECRET NAME"), scalar(2, 7)))));
+  await f.page.fetch(SYNC); await settle();
+  const d = plain(f.command("discover").diagnostics);
+  assert.equal(d.rosterSync, 1); assert.equal(d.rosterSyncNames, 0); assert.match(d.rosterShape, /^[0-9:,()!]+$/); assert.ok(!d.rosterShape.includes("SECRET"));
 });

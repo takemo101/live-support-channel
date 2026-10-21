@@ -90,3 +90,5 @@ lease失効だけは、パネルが新しい所有者でrecoverを呼んで同�
 ## 名簿の取得元（Tactiq 3.1.7302との比較・実機未確認）
 
 Tactiqは、名簿を **`SyncMeetingSpaceCollections` のfetch応答**（base64のprotobuf。`BMeetingCollection.2.2.2` ＝ 反復する `{1:deviceId, 2:deviceName}`）から読み、`collections` チャネルは参加後の変更の補完に使う。自分のdevice idは、`CreateMeetingDevice` の応答と `SyncMeetingSpaceCollections` の要求本文から `spaces/<id>/devices/<id>` を正規表現で拾う。当方は以前チャネルだけを読んでいたため、参加時点で既にいる人と自分の名前を取りこぼし、「話者 N（名前未確認）」になっていた。現在はfetchの応答を `clone()` から読み取り専用で取り込む（応答そのものは触らず、独自のHTTP要求も出さない）。名簿に自分の名前が無いときは「あなた（自分）」と表示する。
+
+名簿の診断：パネルに `名簿`（名前の数）、`RPC観測`（フックが見たMeet自身のRPC呼び出し数）、`同期応答`（読んだ一覧の数）、`同期名簿`（そこから得た名前の数）、`名簿通信`（collectionsチャネルのフレーム数）、`自分ID`（0/1）を整数で出す。一覧の応答から名前が得られなかったときは、その構造（field番号とwire型のみ）を `名簿形=` に出す。一覧はMeetの参加時に1回だけ取得されるため、拡張を更新した後は、Meetのタブを閉じて参加前に開き直す必要がある（参加済みのタブでは取得できない）。応答は、base64テキストまたは素のprotobufバイトのどちらでも読み、URLはhostがmeet.google.comのMeet自身の `/$rpc/` 呼び出しだけを対象にする。
