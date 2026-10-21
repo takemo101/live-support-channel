@@ -6,8 +6,14 @@
   "minimum_chrome_version": "125",
   "devtools_page": "devtools.html",
   "permissions": ["storage"],
+  "background": { "service_worker": "background.js" },
   "host_permissions": [
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://app.zoom.us/*"
   ],
   "content_scripts": [
     { "matches": ["https://meet.google.com/*"], "js": ["hook-core.js", "meet-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },

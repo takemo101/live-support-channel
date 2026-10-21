@@ -1,6 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { runtimeDirectory } from "./runtime.js";
+import { runtimeDirectory, screenshotDirectory } from "./runtime.js";
 import { once } from "node:events";
 import { createBridge } from "./bridge.js";
 import { prepareToken } from "./token.js";
@@ -45,6 +45,7 @@ if (pull) {
 const bridge = createBridge({
   token,
   isReady: () => initialized,
+  screenshots: { directory: screenshotDirectory() },
   publish: async event => {
     if (!pull) return mcp.notification(event);
     const { content, meta } = event.params;
@@ -57,6 +58,7 @@ const close = () => {
   initialized = false;
   bridge.closeAllConnections();
   bridge.close();
+  void bridge.clearScreenshots();
 };
 mcp.onclose = close;
 process.stdin.once("end", close);

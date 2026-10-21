@@ -67,3 +67,18 @@ test("a port that is already in use is reported to the user without crashing the
   await assert.doesNotReject(a.session.start());
   assert.equal(a.notes.at(-1)[1], "error"); assert.match(a.notes.at(-1)[0], /in use/);
 });
+test("a screenshot uploaded before a batch reaches the session as a path beside the runtime directory, and shutdown removes it", async t => {
+  const { readdir } = await import("node:fs/promises");
+  const a = await agent(t); await a.session.start();
+  const url = a.url(), token = (await readFile(join(a.runtime, "token"), "utf8")).trim(), screens = a.runtime + "-screens";
+  t.after(() => rm(screens, { recursive: true, force: true }));
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("pi screenshot"), Buffer.from([0xff, 0xd9])]);
+  assert.equal((await fetch(`${url}/screenshots?sessionId=33333333-3333-4333-8333-333333333333&sequence=1`, { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "image/jpeg" }, body: jpeg })).status, 202);
+  assert.equal(await post(url, token, batch(1, "look at this slide")), 202);
+  const path = join(screens, "33333333-3333-4333-8333-333333333333-1.jpg");
+  assert.ok(a.sent[0].message.content.includes(JSON.stringify(path).slice(1, -1)), "the path is in the delivered message");
+  assert.deepEqual(await readFile(path), jpeg);
+  await a.session.shutdown();
+  for (let i = 0; i < 100; i++) { if (!(await readdir(screens)).length) return; await new Promise(r => setTimeout(r, 20)); }
+  assert.fail("shutdown should remove the screenshots");
+});

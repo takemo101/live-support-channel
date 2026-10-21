@@ -1,18 +1,23 @@
 import { readCaptions } from "./snapshot.js";
 import { CaptionStream } from "./stream.js";
 import { describe, statistics } from "./diagnostics.js";
+import { captureScreenshot, similar } from "./screenshot.js";
 
 // Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
 // "5" and "30" send on a fixed cadence in seconds. A failed send is retried after RETRY ms.
 const QUIET = 3000, MAX_HOLD = 45000, RETRY = 5000, CADENCE = { 5: 5000, 30: 30000 };
 const DESCRIPTION = { pause: "発話の区切りごと（最大45秒）", 5: "約5秒ごと", 30: "約30秒ごと" };
-export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, now = () => performance.now() }) {
+// `screenshot()` resolves to { bytes (JPEG), signature } of the meeting tab, or null when none could be taken (inactive tab, rate limit, no permission).
+export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, screenshot, now = () => performance.now() }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
   let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false, platform = "Google Meet";
   let batch = "pause", lastChange = 0, pendingSince = null, lastSent = 0, retryAt = 0;
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map(), signatures = new Map();
+  // Screenshots: one is taken per batch (and reused if the batch is resent), uploaded just before it, and skipped while the screen looks unchanged.
+  let shotsOn = false, lastShot = null, shotsSent = 0;
+  const batchShots = new WeakMap();
   const status = message => { el("status").textContent = message; };
   function badge() {
     const [kind, label] = !active ? (failed ? ["error", "停止（要確認）"] : captionReady ? ["ready", "準備OK"] : ["idle", "未準備"])
@@ -20,7 +25,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     el("state").textContent = label; el("state").className = "state " + kind;
   }
   function controls() {
-    for (const id of ["token", "meeting", "refresh", "consent", "assist"]) el(id).disabled = active;
+    for (const id of ["token", "meeting", "refresh", "consent", "assist", "shots"]) if (el(id)) el(id).disabled = active;
     el("start").disabled = active || !captionReady || !el("meeting").value || !el("consent").checked;
     el("stop").disabled = !active;
     el("pause").disabled = !active || busy || !stream.run;
@@ -61,7 +66,32 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     });
     if (!response.ok) throw Object.assign(Error("受信先エラー HTTP " + response.status), { status: response.status, fatal: response.status >= 400 && response.status < 500 });
   }
-  const stream = new CaptionStream(payload => request("/captions", payload));
+  async function takeShot() {
+    try {
+      const shot = await screenshot();
+      if (!shot?.bytes?.length) return null;
+      if (similar(lastShot, shot.signature)) return null;
+      lastShot = shot.signature; return shot;
+    } catch { return null; }
+  }
+  // A screenshot problem never blocks or stops the captions: the batch goes out either way.
+  async function deliver(payload) {
+    if (shotsOn) {
+      if (!batchShots.has(payload)) batchShots.set(payload, await takeShot());
+      const shot = batchShots.get(payload);
+      if (shot && active && !paused) {
+        try {
+          const response = await fetch(endpoint + "/screenshots?sessionId=" + encodeURIComponent(payload.sessionId) + "&sequence=" + payload.sequence, {
+            method: "POST", headers: { authorization: "Bearer " + pairingToken, "content-type": "image/jpeg" }, body: shot.bytes, redirect: "error",
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+          });
+          if (response.ok) { shotsSent++; batchShots.set(payload, null); }
+        } catch {}
+      }
+    }
+    await request("/captions", payload);
+  }
+  const stream = new CaptionStream(payload => deliver(payload));
   async function refresh() {
     if (active) return;
     const run = ++generation;
@@ -148,7 +178,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       await stream.update({ ...lastSnapshot, blocks: [...captured.values()] });
       if (!active || paused || run !== generation) return;
       pendingSince = lastChange > sentAt ? lastChange : null;
-      status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (recoveries ? `／自動復旧=${recoveries}` : ""));
+      status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (shotsOn ? "／画像=" + shotsSent : "") + (recoveries ? `／自動復旧=${recoveries}` : ""));
     } catch (error) {
       if (active && run === generation) {
         if (error.fatal) stop(error.message + "。停止しました。", true);
@@ -160,7 +190,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (busy || (resume ? !active || !paused : active)) return;
     if (!resume && (!captionReady || !el("consent").checked || !el("meeting").value)) { status("字幕の準備確認と参加者同意が必要です。"); return; }
     if (!resume && !/^[A-Za-z0-9_-]{43}$/.test(el("token").value.trim())) { status("ペアリングトークン（43文字）を確認してください。"); return; }
-    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; batch = Object.hasOwn(DESCRIPTION, el("batch")?.value) ? el("batch").value : "pause"; }
+    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; batch = Object.hasOwn(DESCRIPTION, el("batch")?.value) ? el("batch").value : "pause"; shotsOn = typeof screenshot === "function" && el("shots")?.checked !== false; lastShot = null; shotsSent = 0; }
     active = true; busy = true; failed = false;
     const run = ++generation;
     controller = new AbortController(); captureId = crypto.randomUUID();
@@ -209,7 +239,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   return { stop, refresh, dispose() { stop(); onNavigated.removeListener(navigate); } };
 }
 if (globalThis.chrome?.devtools && globalThis.document) {
-  const panel = createPanel({ document, inspectedWindow: chrome.devtools.inspectedWindow, onNavigated: chrome.devtools.network.onNavigated, fetch: globalThis.fetch.bind(globalThis), setInterval, clearInterval,
+  const panel = createPanel({ document, inspectedWindow: chrome.devtools.inspectedWindow, screenshot: () => captureScreenshot(chrome.devtools.inspectedWindow.tabId), onNavigated: chrome.devtools.network.onNavigated, fetch: globalThis.fetch.bind(globalThis), setInterval, clearInterval,
     storage: chrome.storage?.session && { get: async () => (await chrome.storage.session.get("token")).token, set: token => chrome.storage.session.set({ token }), remove: () => chrome.storage.session.remove("token") } });
   addEventListener("pagehide", () => panel.dispose(), { once: true });
   addEventListener("live-support-panel-hidden", () => panel.stop("パネルを離れたため停止しました。"));

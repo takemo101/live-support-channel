@@ -17,7 +17,7 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 
-対象外：Zoomのソケット・参加者一覧の読取り、Teamsの字幕開始（`startClosedCaption()` など、アプリの状態を変える呼び出し）・参加者名簿の取得（websocket）、Zoom・Teams・Meetの内部状態の書換え、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
+対象外：Zoomのソケット・参加者一覧の読取り、Teamsの字幕開始（`startClosedCaption()` など、アプリの状態を変える呼び出し）・参加者名簿の取得（websocket）、Zoom・Teams・Meetの内部状態の書換え、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・翻訳別フィードの取得、会議タブ以外（他のウィンドウ・他のタブ）の画像、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
 
 字幕は取得できた一部分です。初回ID除外、通信遅延・欠落等があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
 
@@ -151,6 +151,7 @@ panel.jsは同意・UI・世代管理・heartbeat・蓄積・HTTP、stream.jsは
 bind先はloopbackのみ。`Authorization: Bearer <pairing-token>` が必要です。Hostは実際の `127.0.0.1:<port>` と一致、Originがあれば `chrome-extension://<32文字ID>` 形式だけ許可します。Origin形式だけを認証として信頼しません。一般webサイトへCORSを開放しません。
 
 - `GET /health`：MCP初期化済みなら200、未初期化なら503。bodyは空。
+- `POST /screenshots?sessionId=<UUID>&sequence=<n>`：会議画面のJPEG（`image/jpeg`、先頭がJPEGのマジックバイト、2MiBまで、Content-Encodingは不可）。同じ `sessionId`・`sequence` のバッチの**直前**に送る。受信側は専用ディレクトリ（`~/.live-support-screens`、0700。ファイルは0600。ランタイムのディレクトリの外）へ保存し、そのバッチのイベントに `screenshot`（絶対パス）を足す。新しい30枚だけ保持し、受信側の停止時と `live-support claude` の起動時に全削除する。ディレクトリを設定しない受信側（`screenshots: null`）では404。
 - `POST /captions`：`application/json` のみ、Content-Encodingは不可。次は架空の例。
 
 ```json
@@ -241,7 +242,7 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 
 ## 9. 安全性と受入確認
 
-追加アクセスはcontent_scripts.matchesの **https://meet.google.com/**（v0.5）、Teams 3ホスト（**https://teams.microsoft.com／teams.live.com／teams.cloud.microsoft**、v0.6）、**https://app.zoom.us/**（v0.7）だけ。いずれも静的で、実行時の追加許可ダイアログは使わない（本人の指示）。Meetは実装前に本人がサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。Teams／Zoomは本人の「Zoom／Teams対応に進む」依頼による追加で、TeamsとZoomは表示字幕の読取りのみ（購読・送信・書込みなし）。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。拡張APIの権限は `storage`（パネルがtokenを`chrome.storage.session`へ記憶するためだけ。UI改善依頼で追加、実Chrome未検証）のみ。tabs／scripting／debugger／全サイト／音声権限は追加しない。
+追加アクセスはcontent_scripts.matchesの **https://meet.google.com/**（v0.5）、Teams 3ホスト（**https://teams.microsoft.com／teams.live.com／teams.cloud.microsoft**、v0.6）、**https://app.zoom.us/**（v0.7）だけ。いずれも静的で、実行時の追加許可ダイアログは使わない（本人の指示）。Meetは実装前に本人がサイトアクセスと、必要時の字幕DataChannel購読・own-v2 ACKを個別承認した。Teams／Zoomは本人の「Zoom／Teams対応に進む」依頼による追加で、TeamsとZoomは表示字幕の読取りのみ（購読・送信・書込みなし）。実Chromeでの許可は本人操作であり、この承認で組織ポリシーやChrome警告を迂回しない。拡張APIの権限は `storage`（パネルがtokenを`chrome.storage.session`へ記憶するためだけ。UI改善依頼で追加、実Chrome未検証）のみ。tabs／scripting／debugger／全サイト／音声権限は追加しない。 **v0.8の画面スクリーンショット：** 同じ5サイトを `host_permissions` にも静的に置き（`captureVisibleTab` に必要。`tabs`・`activeTab`・`debugger`・`<all_urls>` は使わない）、`background.js`（service worker）だけが、パネルの依頼で、**そのタブがウィンドウの前面にあるとき**に撮る（前面でなければ、他のタブの写真を撮らず、撮らない）。画面共有の資料・参加者の顔・名前・チャットが写り得て、Anthropicへ送られる。パネルのチェック（既定ON、開始時に固定）で止められる。パネルが長辺1280px・JPEG品質0.6へ縮小し、前回から変わっていない画面は送らない。取得・送信の失敗は字幕の送信を止めない。
 
 MAIN worldはページと同じJS環境で、OS／ページ隔離のsandboxではない。transport tokenは拡張パネルにのみ保持する。字幕・話者情報は非信頼データとして扱い、命令・ツール権限承認には使わない。自作channelの停止は元の会議接続を停止しない。
 

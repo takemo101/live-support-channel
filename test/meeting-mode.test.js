@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -74,4 +74,14 @@ test("plugin uses the repository-root skills directory and is included in npm fi
   assert.equal(manifest.mcpServers, undefined);
   const p = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   assert.ok(p.files.includes("skills/") && p.files.includes(".claude-plugin/"));
+});
+test("launch gives the agent a private screenshot directory beside, not inside, the runtime directory", async t => {
+  const { result, args, runtime } = await launch(t);
+  assert.equal(result.status, 0, result.stderr);
+  const screens = runtime + "-screens";
+  assert.equal(args[args.indexOf("--add-dir") + 1], screens, "the agent may read the screenshots");
+  assert.ok(!args.includes(runtime), "the runtime directory (token) is never added");
+  assert.ok(!(screens + "/").startsWith(runtime + "/"), "outside the denied runtime tree");
+  assert.equal((await stat(screens)).mode & 0o777, 0o700);
+  assert.equal(JSON.parse(args[args.indexOf("--mcp-config") + 1]).mcpServers["live-support"].env.LIVE_SUPPORT_SCREENSHOT_DIR, screens);
 });

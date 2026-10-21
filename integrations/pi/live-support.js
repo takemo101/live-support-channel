@@ -8,7 +8,7 @@
 import { once } from "node:events";
 import { createBridge } from "../../server/bridge.js";
 import { instructions } from "../../server/instructions.js";
-import { runtimeDirectory } from "../../server/runtime.js";
+import { runtimeDirectory, screenshotDirectory } from "../../server/runtime.js";
 import { prepareToken, renewToken } from "../../server/token.js";
 
 // Child sessions of one agent process load this module again with fresh APIs: only the session that started the receiver owns it.
@@ -32,7 +32,8 @@ export default function liveSupport(pi) {
     const directory = runtimeDirectory();
     await prepareToken(directory); await renewToken(directory);
     const token = await prepareToken(directory);
-    const bridge = createBridge({ token, isReady: () => shared.ready, publish });
+    const bridge = createBridge({ token, isReady: () => shared.ready, publish, screenshots: { directory: screenshotDirectory() } });
+    await bridge.clearScreenshots();
     shared.bridge = bridge; shared.owner = pi;
     try {
       bridge.listen(port, "127.0.0.1"); await once(bridge, "listening");
@@ -47,7 +48,7 @@ export default function liveSupport(pi) {
   function stop() {
     const bridge = shared.bridge;
     shared.bridge = shared.owner = null; shared.ready = false; shared.url = null;
-    if (bridge) { bridge.closeAllConnections(); bridge.close(); }
+    if (bridge) { bridge.closeAllConnections(); bridge.close(); void bridge.clearScreenshots(); }
   }
 
   pi.on("session_start", async (_event, ctx) => {
