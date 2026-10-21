@@ -7,6 +7,7 @@ import vm from "node:vm";
 const readSource = async name => readFile(new URL("../extension/" + name, import.meta.url), "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
 const source = await readSource("hook-core.js") + "\n" + await readSource("meet-hook.js");
 const key = "__liveCaptionsRtc_v1", meetingId = "meet.google.com/abc-defg-hij";
+const plain = value => JSON.parse(JSON.stringify(value));
 const bytes = (...parts) => Uint8Array.from(parts.flatMap(p => [...p]));
 function uint(value) { let n = BigInt(value); const out = []; do { let b = Number(n & 127n); n >>= 7n; out.push(b | (n ? 128 : 0)); } while (n); return Uint8Array.from(out); }
 const scalar = (field, value) => bytes(uint(field * 8), uint(value));
@@ -217,27 +218,52 @@ test("chat, unknown labels and synthetic JS events never enter the decoder", t =
   f.channel.emit("message", { isTrusted: false, get data() { assert.fail("synthetic event access"); } });
   assert.equal(f.command("read").blocks.length, 0);
 });
-for (const bad of [Uint8Array.of(10, 255), Uint8Array.of(10, 2, 8, 1), new Uint8Array(262145)]) {
-  test("malformed/oversize frames stop without text fallback: " + bad.length, async t => {
+for (const bad of [Uint8Array.of(10, 255), Uint8Array.of(10, 2, 8, 1), Uint8Array.of(), blob(2, string(1, "control-like")), "a text frame"]) {
+  test("a frame that is not a usable caption is dropped and counted, never fatal: " + (bad.length ?? "text"), async t => {
     const f = fixture(t); f.command("start"); f.channel.message(bad); await f.drain();
-    assert.notEqual(f.command("read").status, "live"); assert.equal(f.command("read").blocks, undefined);
-    assert.equal(f.command("read").diagnostics?.received, bad.length > 262144 ? 0 : 1);
-    assert.equal(f.command("read").diagnostics?.queued, 0);
+    const read = f.command("read"); assert.equal(read.status, "live"); assert.equal(read.blocks.length, 0);
+    assert.equal(read.diagnostics.dropped, 1); assert.equal(read.diagnostics.queued, 0);
   });
 }
+test("an oversize frame stops the capture and never reaches the async queue", async t => {
+  const f = fixture(t); f.command("start"); f.channel.message(new Uint8Array(262145)); await f.drain();
+  const read = f.command("read"); assert.equal(read.code, "CAPTION_LIMIT"); assert.equal(read.blocks, undefined); assert.equal(read.diagnostics.queued, 0);
+});
+test("only a stream of nothing usable stops the capture as an unknown format", async t => {
+  const f = fixture(t); f.command("start");
+  f.channel.message(packet(1, "baseline")); await f.drain();
+  for (let i = 0; i < 80; i++) { f.channel.message(Uint8Array.of(10, 255)); await f.drain(); }
+  assert.equal(f.command("read").status, "live", "junk next to real captions is tolerated");
+  const g = fixture(t); g.command("start");
+  for (let i = 0; i < 60; i++) { g.channel.message(Uint8Array.of(10, 255)); await g.drain(); }
+  assert.equal(g.command("read").code, "CAPTION_FORMAT_UNKNOWN");
+});
+test("frames decode like protobuf: zero-valued fields are absent, unknown and repeated fields are tolerated", async t => {
+  const f = fixture(t); f.command("start");
+  const caption = (text, device = "synthetic-device") => blob(3, bytes(string(3, text), string(6, "stale-device"), string(6, device), scalar(15, 7), string(4, "ja-JP")));
+  f.channel.message(blob(1, bytes(scalar(1, 5), caption("baseline")))); await f.drain();                      // no version field at all (version 0), unknown field 15
+  f.channel.message(blob(1, bytes(scalar(1, 6), caption("zero version")))); await f.drain();
+  f.channel.message(blob(1, bytes(scalar(1, 6), scalar(2, 1), caption("one version")))); await f.drain();
+  f.channel.message(blob(1, bytes(scalar(1, 7), blob(3, bytes(string(6, "synthetic-device")))))); await f.drain();   // no text: nothing to send
+  f.channel.message(blob(2, string(1, "heartbeat"))); await f.drain();                                        // no utterance at all
+  const read = f.command("read"); assert.equal(read.status, "live");
+  assert.deepEqual(plain(read.blocks.map(b => [b.transcript, b.messageVersion])), [["one version", 1]]);
+  assert.equal(read.diagnostics.dropped, 1, "only the frame without an utterance is counted");
+});
 test("legacy gzip framing is bounded and decodes the known envelope", async t => {
   const f = fixture(t, { label: "captions" }); f.command("start");
   f.channel.message(gzipSync(packet(1, "baseline", 1, "d", "captions"))); await f.drain();
   f.channel.message(bytes([0, 0, 0], gzipSync(packet(2, "after gzip", 1, "d", "captions")))); await f.drain();
   assert.equal(f.command("read").blocks[0].transcript, "after gzip");
 });
-test("unknown out-of-order IDs and same-version conflicting text fail closed", async t => {
-  for (const conflict of [false, true]) {
-    const f = fixture(t); f.command("start"); f.channel.message(packet(10, "baseline")); await f.drain();
-    f.channel.message(packet(12, "new")); await f.drain();
-    f.channel.message(conflict ? packet(12, "different at same version") : packet(11, "unknown older history")); await f.drain();
-    assert.notEqual(f.command("read").status, "live");
-  }
+test("a late older ID is a new utterance and a repeated version with newer text replaces it; an older version never does", async t => {
+  const f = fixture(t); f.command("start"); f.channel.message(packet(10, "baseline")); await f.drain();
+  f.channel.message(packet(12, "new")); await f.drain();
+  f.channel.message(packet(11, "late older id")); await f.drain();
+  f.channel.message(packet(12, "newer at same version")); await f.drain();
+  f.channel.message(packet(12, "stale", 0)); await f.drain();
+  const read = f.command("read"); assert.equal(read.status, "live");
+  assert.deepEqual(plain(read.blocks.map(b => b.transcript)), ["newer at same version", "late older id"]);
 });
 test("metadata-only utterances cannot collide when text arrives later", async t => {
   const f = fixture(t); f.command("start");
@@ -310,9 +336,9 @@ test("positive signed-int64 maximum is accepted without rounding", async t => {
   f.channel.message(packet(max, "signed maximum")); await f.drain();
   assert.equal(f.command("read").blocks[0].transcript, "signed maximum");
 });
-for (const id of [0n, 1n << 63n, (1n << 64n) - 1n]) test("ID outside positive signed-int64 is rejected: " + id, async t => {
+for (const id of [0n, 1n << 63n, (1n << 64n) - 1n]) test("ID outside positive signed-int64 is dropped, not forwarded: " + id, async t => {
   const f = fixture(t); f.command("start"); f.channel.message(packet(id, "out of domain")); await f.drain();
-  assert.equal(f.command("read").code, "CAPTION_FORMAT_UNKNOWN"); assert.equal(f.command("read").blocks, undefined);
+  const read = f.command("read"); assert.equal(read.status, "live"); assert.equal(read.blocks.length, 0); assert.equal(read.diagnostics.dropped, 1);
 });
 for (const options of [{ host: "evil.example" }, { framed: true }]) test("no hook installation outside Meet main frame", t => {
   assert.equal(fixture(t, options).api, undefined);
@@ -450,4 +476,11 @@ test("the hook identifies a meeting under /meet/<code> and rejects other paths",
   const meta = f.command("discover"); assert.equal(meta.code, "READY");
   assert.equal(JSON.parse(JSON.stringify(meta.meetings.map(m => m.id)))[0], "meet.google.com/meet/abc-defg-hij");
   f.page.location.pathname = "/foo/abc-defg-hij"; assert.equal(f.command("discover").code, "NOT_MEETING_PAGE");
+});
+test("every unusable frame is classified so a real-world mismatch can be diagnosed without any caption text", async t => {
+  const f = fixture(t); f.command("start");
+  for (const frame of [Uint8Array.of(10, 255), blob(2, string(1, "x")), blob(1, bytes(scalar(1, 5), blob(3, string(3, "no device")))), blob(1, bytes(scalar(1, 0), blob(3, string(6, "d")))), "text"]) { f.channel.message(frame); await f.drain(); }
+  const d = plain(f.command("read").diagnostics);
+  assert.deepEqual([d.dropped, d.frame, d.utterance, d.device, d.id, d.binary], [5, 1, 1, 1, 1, 1]);
+  assert.ok(!JSON.stringify(d).includes("no device"), "never any text");
 });

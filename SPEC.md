@@ -12,7 +12,7 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
 - Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。話者名はMeetの名簿メッセージ（collections）から。Teams：通話の字幕イベントのハンドラを開始後だけ包む傍受。Zoom：アプリのReduxストアを開始後だけ購読（読み取りのみ）。いずれも話者は表示名。
-- 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
+- 同意後の開始・一時停止・再開・停止。使えるフレームが1つもない（50件超）・字幕OFF・lease失効等で停止。
 - 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
@@ -96,7 +96,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 - 未処理payloadは可変キューから即時解放する。実行中のgzip readerはcancelし、取消不能な読取り最大1件は結果を無効化する。その終了まではCAPTION_DECODE_BUSYで新captureを拒否する。
 - 再開時は新しいcapture所有者・送信sessionを作り、各話者の初回IDを再基準化する。休止期間は取り戻さない。
 - **Tactiqのpauseとは連動しない。** Tactiqを止めても本readerは止まらない。
-- 停止、pagehide、ページ移動、字幕OFF、未知形式、順序／修正の矛盾、チャネル終了、上限、HTTP4xxで停止。自動再購読しない。
+- 停止、pagehide、ページ移動、字幕OFF、使えるフレームがない状態の継続、チャネル終了、上限、HTTP4xxで停止。自動再購読しない。
 - パネルは約1秒でheartbeatを送り、約2秒のleaseが切れたら本文を破棄して自分のチャネルを閉じる。元のアプリのチャネル・PeerConnectionは閉じない。
 - **lease失効（CAPTURE_EXPIRED）だけは同じ会議へ自動復旧する。** パネルが新しいcapture所有者でrecoverを呼び、フックは「現在のcaptureが無く、直前の終了がCAPTURE_EXPIREDで、旧所有者・会議が一致」する場合だけ新規購読を許可する。手動の停止・一時停止・字幕OFF・会議変更・他のcapture・他の終了理由は復旧せず停止する。CAPTION_DECODE_BUSYだけは次の約1秒周期で最大10回再試行し、超えたら停止。送信系列・未確認バッチ・蓄積は維持するが、**失効中の字幕、復旧後の各話者の初回ID以前は欠落し、話者番号は振り直される**（状態表示に回数を出す）。MAINは今も約2秒で安全停止するため、無欠落の取得ではない。
 - Main worldとDevToolsは非同期なので、停止指示の到達前や発行済み処理は即時取消できない。各frameと非同期decode後にも所有者・leaseを確認し、失効した結果を送らない。
@@ -140,7 +140,7 @@ snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはm
 
 **Claude Code以外のエージェント（omp・pi・agy）。** 受信口（`127.0.0.1:43821`）と拡張からのPOSTは共通で、セッションへ渡す部分だけが違う。omp・pi：`integrations/pi/live-support.js`（同じ拡張API）が、セッション開始時にエージェントの中で `server/bridge.js` の受信口を開き、トークンを更新し、各バッチを `sendMessage({ customType: "live-support" }, { deliverAs: "followUp", triggerTurn: true })` で渡す（最初のメッセージに `server/instructions.js` の説明を付ける）。送信に失敗すれば503でパネルが再送する。子セッションは受信口を二重に開かず、終了時に閉じる。agy：`LIVE_SUPPORT_TOOLS=1` のMCPサーバーが、Channelsの通知の代わりに最新200件のバッチを保持し、`get_captions`（`after` のカーソル、1回約200KBまで）で返す。いずれもClaude Code用の読取り専用の制限は再現しない。詳しくは [other-agents.md](docs/other-agents.md)。
 
-正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert、未知の逆順IDや同番号異本文は停止する。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
+正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert。遅れて届いた古いIDは新しい発話として扱い、同じ版で本文が新しければ置き換え、古い版は採用しない（停止しない）。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
 
 `hook-core.js` は全プラットフォーム共通の所有者・lease・終了状態・recoverの前提確認・コマンドの封筒だけを持ち、本文には触れない。manifestの各エントリは `js: [hook-core.js, <platform>-hook.js]` の順で、各hookがコアを一度だけ受け取って即座に消す（ページのスクリプトからは到達できず、コアが無いhookは何も入れない）。実Chromeでの拡張ロード時の実行順は未確認。
 
@@ -205,7 +205,7 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 | HTTP body／request・header timeout | 262144 bytes／各10000 ms |
 | keep-alive／同時接続／session保持 | 1000 ms／16／1プロセス最大32 |
 
-未知のwire type・重複field・不正UTF8・過大整数等は無理に文字列化せず停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
+Meetのデコードはprotobufの意味に従い（未知のfieldは読み飛ばし、重複fieldは最後の値、0の値はwireに現れない＝版の欠落は0）、字幕として使えないフレーム（発話なし・話者IDなし・IDが範囲外・形式不正・非バイナリ）は捨てて理由別に数え、**使えるフレームが1つもないまま50件を超えたときだけ** `CAPTION_FORMAT_UNKNOWN` で停止する（理由の件数はパネルに出る。本文は含まない）。256KB超のフレームと上限超過は `CAPTION_LIMIT` で停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
 保存先は ~/.live-support/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 
@@ -229,7 +229,6 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 | CAPTION_ACK_BACKLOG_LIMIT | 自分のACK出力上限。自分の購読だけ閉じて停止、通信状態を確認 |
 | CAPTURE_EXPIRED | heartbeat途絶で破棄。同じ会議へ自動復旧（欠落あり）。復旧が拒否されれば停止 |
 | CAPTION_CHANNEL_CLOSED／RTC_CONNECTION_CLOSED | 接続終了。自動では再購読しない |
-| CAPTION_SEQUENCE_UNKNOWN／CAPTION_REVISION_CONFLICT | IDや修正の同一性が不明のため停止 |
 | CAPTION_LIMIT／CAPTION_BACKLOG_LIMIT／CAPTURE_BUFFER_LIMIT | 無言で削らず停止。非機密fixtureで確認 |
 | HTTP401／409／429／503 | 新token、系列不一致、session上限、MCP初期化を確認 |
 | 受信はあるが採用0 | 各話者の初回ID以前は除外。次のIDから確認 |

@@ -96,7 +96,7 @@ test("real Chrome loopback RTC captions feed real HTTP/MCP with no meeting or mo
       roster.send(Uint8Array.of(10, 255)); roster.send(Uint8Array.of(26, 3, 1)); await new Promise(r => setTimeout(r, 100));
       eq(call("discover").diagnostics.names, 2, "malformed roster messages are ignored"); eq(call("read").status, "live", "and never stop the capture");
       await send(Uint8Array.of(10, 255));
-      eq(call("read").code, "CAPTION_FORMAT_UNKNOWN", "unknown protocol stops, not DOM fallback");
+      eq([call("read").status, call("read").diagnostics.dropped], ["live", 1], "an unusable frame is dropped and counted, never fatal");
       eq(transport.readyState, "open", "decode failure preserves native transport");
       call("start"); await new Promise(r => setTimeout(r, 2150));
       eq(call("read").code, "CAPTURE_EXPIRED", "abandoned panel lease expires in real Chrome");
