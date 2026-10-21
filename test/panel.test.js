@@ -445,3 +445,11 @@ test("a failed send is retried after a pause, not on every tick", async t => {
   await s.tick(500); await s.tick(500); assert.equal(posts(s).length, 1, "no retry inside the back-off");
   fail = false; await s.tick(5000); assert.equal(posts(s).length, 2);
 });
+test("Meet's drop reasons and caption profile are shown as whitelisted counters and fixed names only", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { peers: 1, dropped: 60, frame: 3, utterance: 50, device: 7, id: 0, binary: 0, profile: "captions_v2", secret: "PRIVATE" };
+  s.elements.refresh.click(); await turn();
+  for (const part of [/不正=60/, /形式不正=3/, /発話なし=50/, /話者ID不正=7/, /方式=captions_v2/]) assert.match(s.elements.status.textContent, part);
+  s.fixture.diagnostics = { profile: "<script>PRIVATE" }; s.elements.refresh.click(); await turn();
+  assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("方式="));
+});

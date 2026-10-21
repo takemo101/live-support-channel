@@ -15,12 +15,10 @@ const messages = {
   CAPTION_LANGUAGE_UNKNOWN: "Meetの字幕言語をまだ観測できていません。Meetの字幕設定で言語を一度選ぶか、字幕をONにしてください。",
   CAPTION_ENABLE_FAILED: "字幕の開始指示を送れませんでした。再試行はしません。Meetで字幕をONにするか、ページを再読み込みしてください。",
   CAPTION_SUBSCRIPTION_FAILED: "字幕チャネルを追加できません。標準字幕・組織設定・他の字幕拡張との競合を確認してください。",
-  CAPTION_FORMAT_UNKNOWN: "未対応の字幕通信形式です。本文を送らず停止しました。診断コードと件数だけを報告してください。",
+  CAPTION_FORMAT_UNKNOWN: "字幕として使えるデータが届かないため、本文を送らず停止しました。診断コードと件数（形式不正・発話なし・ID不正など）だけを報告してください。",
   CAPTION_BACKLOG_LIMIT: "字幕の処理待ち上限に達したため停止しました。",
   CAPTION_DECODE_BUSY: "前の処理の終了を待っています。しばらくして「再確認」してください。解消しない場合は、テスト会議でページを再読み込みしてください。",
   CAPTION_ACK_BACKLOG_LIMIT: "字幕の受信確認の送信待ち上限に達したため停止しました。通信状態を確認して再確認してください。",
-  CAPTION_SEQUENCE_UNKNOWN: "発話IDの順序を確認できないため停止しました。",
-  CAPTION_REVISION_CONFLICT: "同じ修正番号で本文が異なるため停止しました。",
   CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
   CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
   PLATFORM_NOT_IMPLEMENTED: "ZoomはWebクライアント（app.zoom.us）だけに対応しています。ブラウザ版で参加してください。",
@@ -38,10 +36,12 @@ const messages = {
   READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
 };
 export function statistics(d) {
-  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"]]
+  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"], ["frame", "形式不正"], ["utterance", "発話なし"], ["id", "ID不正"], ["device", "話者ID不正"], ["binary", "非バイナリ"]]
     .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
     .map(([key, label]) => `${label}=${d[key]}`);
-  return counts.join("／");
+  // Which Meet caption profile (a fixed vocabulary) the capture settled on.
+  const profile = ["captions", "captions_v2"].includes(d?.profile) ? [`方式=${d.profile}`] : [];
+  return [...counts, ...profile].join("／");
 }
 export function describe(result) {
   const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";

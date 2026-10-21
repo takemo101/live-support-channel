@@ -41,7 +41,7 @@
       if (cursor.pos >= bytes.length) invalid();
       const b = bytes[cursor.pos++]; if (i === 9 && b > 1) invalid();
       value |= BigInt(b & 127) << BigInt(i * 7);
-      if (!(b & 128)) { if (i && b === 0) invalid(); return value; }
+      if (!(b & 128)) return value;
     }
     invalid();
   }
@@ -70,27 +70,51 @@
     const item = map.get(field); if (!item && optional) return null;
     if (!item || item.wire !== wire) invalid(); return item.value;
   }
+  // Decoding follows protobuf semantics (unknown fields skipped, a repeated field keeps its last value, zero-valued fields are absent on the wire),
+  // like the app's own decoder. A frame that is not a usable caption is dropped and counted, never fatal: only a stream of nothing usable stops the capture.
+  function scan(bytes) {
+    const out = new Map(), cursor = { pos: 0 };
+    while (cursor.pos < bytes.length) {
+      const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
+      if (!field) invalid();
+      let value;
+      if (wire === 0) value = varint(bytes, cursor);
+      else if (wire === 1 || wire === 2 || wire === 5) {
+        let length = wire === 1 ? 8 : 4;
+        if (wire === 2) { const n = varint(bytes, cursor); if (n > BigInt(LIMIT)) invalid(); length = Number(n); }
+        if (cursor.pos + length > bytes.length) invalid();
+        value = bytes.subarray(cursor.pos, cursor.pos + length); cursor.pos += length;
+      } else invalid();
+      out.set(field, { wire, value });
+    }
+    return out;
+  }
+  const part = (map, field, wire) => { const item = map.get(field); return item && item.wire === wire ? item.value : null; };
   function text(bytes, max) {
-    let value;
-    try { value = new Decoder("utf-8", { fatal: true }).decode(bytes); } catch { invalid(); }
+    const value = new Decoder("utf-8").decode(bytes);
     if (value.length > max) fail("CAPTION_LIMIT"); return value;
   }
+  // Returns a packet, null for a control frame, or the reason ("frame", "utterance", "device", "id") why the frame is not a usable caption.
   function decode(bytes, label) {
-    const outer = fields(bytes); let message, id, revision, device, body;
-    if (label === "captions") {
-      const control = get(outer, 2, 2, true); if (control?.length) return null;
-      message = fields(get(outer, 1, 2));
-      device = get(message, 1, 2); id = get(message, 2, 0); revision = get(message, 3, 0); body = get(message, 6, 2, true);
-      const lang = get(message, 8, 0); if (lang > 65535n) invalid();
-    } else {
-      message = fields(get(outer, 1, 2)); id = get(message, 1, 0); revision = get(message, 2, 0);
-      const caption = fields(get(message, 3, 2));
-      device = get(caption, 6, 2); body = get(caption, 3, 2, true);
-      const lang = get(caption, 4, 2, true); if (lang && lang.length > 64) invalid();
-    }
-    if (id < 1n || id > 0x7fffffffffffffffn || revision > BigInt(Number.MAX_SAFE_INTEGER) || device.length > 2048) invalid();
+    let id, revision, device, body;
+    try {
+      const outer = scan(bytes);
+      if (label === "captions") {
+        if (part(outer, 2, 2)?.length) return null;
+        const message = part(outer, 1, 2); if (!message) return "utterance";
+        const fields = scan(message);
+        device = part(fields, 1, 2); id = part(fields, 2, 0); revision = part(fields, 3, 0) ?? 0n; body = part(fields, 6, 2);
+      } else {
+        const message = part(outer, 1, 2); if (!message) return "utterance";
+        const fields = scan(message), caption = part(fields, 3, 2); if (!caption) return "utterance";
+        id = part(fields, 1, 0); revision = part(fields, 2, 0) ?? 0n;
+        const inner = scan(caption); device = part(inner, 6, 2); body = part(inner, 3, 2);
+      }
+    } catch { return "frame"; }
+    if (id === null || id < 1n || id > 0x7fffffffffffffffn || revision > BigInt(Number.MAX_SAFE_INTEGER)) return "id";
+    if (!device || device.length > 2048) return "device";
     const deviceId = text(device, 512);
-    if (!deviceId || /\p{Cc}/u.test(deviceId)) invalid();
+    if (!deviceId || /\p{Cc}/u.test(deviceId)) return "device";
     return { id, revision: Number(revision), device: deviceId, text: body === null ? null : text(body, 32768) };
   }
   function integer(value) {
@@ -125,7 +149,7 @@
     if (gzip(0)) offset = 0;
     else if (gzip(3)) offset = 3;
     if (offset < 0) return raw;
-    if (label !== "captions") invalid();
+    if (label !== "captions") return raw;
     const reader = new BinaryBlob([raw.subarray(offset)]).stream().pipeThrough(new Inflate("gzip")).getReader();
     s.reader = reader;
     const chunks = []; let size = 0;
@@ -166,17 +190,13 @@
     if (packet.id <= speaker.boundary) { s.stats.baselineExcluded++; return; }
     const id = `${speaker.number}:${packet.id}`;
     let record = s.records.get(id);
-    if (!record && packet.id < speaker.max) fail("CAPTION_SEQUENCE_UNKNOWN");
     if (packet.id > speaker.max) speaker.max = packet.id;
     if (!record) {
       if (s.records.size >= 4000) fail("CAPTION_LIMIT");
       record = { speaker, block: null, revision: -1, localId: `${s.owner}:${s.records.size + 1}` }; s.records.set(id, record);
     }
-    if (packet.text === null || packet.revision < record.revision) return;
-    if (packet.revision === record.revision) {
-      if (packet.text !== record.block.transcript) fail("CAPTION_REVISION_CONFLICT");
-      return;
-    }
+    // The same version may arrive again with newer text (the app's own pipeline replaces on an equal version): newest wins, an older version never does.
+    if (!packet.text || packet.revision < record.revision || (packet.revision === record.revision && packet.text === record.block?.transcript)) return;
     s.characters += packet.text.length - (record.block?.transcript.length ?? 0);
     if (s.characters > 2_000_000) fail("CAPTION_LIMIT");
     record.revision = packet.revision;
@@ -257,8 +277,9 @@
     const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
     if (s.stats.queued >= 8) { finish("CAPTION_BACKLOG_LIMIT"); return; }
-    let data;
-    try { data = event.data; payloadSize(data); }
+    let data = event.data;
+    if (!(data instanceof BinaryBlob || data instanceof Buffer || Buffer.isView(data))) { life.guard(s, () => { s.stats.binary = (s.stats.binary ?? 0) + 1; life.drop(s); }); return; }
+    try { payloadSize(data); }
     catch (error) { if (life.current === s) finish(error?.code === "CAPTION_LIMIT" ? error.code : "CAPTION_FORMAT_UNKNOWN"); return; }
     if (!valid(s)) return;
     s.stats.received++; s.stats.queued++;
@@ -275,11 +296,11 @@
           if (!s.entries.has(job.entry)) continue;
           const bytes = await unpack(data, job.entry.label, s);
           if (!bytes || !valid(s) || !s.entries.has(job.entry)) continue;
-          const packet = decode(bytes, job.entry.label); if (packet) ingest(s, job.entry, packet);
+          const packet = decode(bytes, job.entry.label); if (typeof packet === "string") { s.stats[packet] = (s.stats[packet] ?? 0) + 1; life.drop(s); } else if (packet) ingest(s, job.entry, packet);
         } finally { s.stats.queued = Math.max(0, s.stats.queued - 1); s.stats.inFlight = 0; }
       }
     } catch (error) {
-      if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_BACKLOG_LIMIT", "CAPTION_ACK_BACKLOG_LIMIT", "CAPTION_SEQUENCE_UNKNOWN", "CAPTION_REVISION_CONFLICT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
+      if (life.current === s) finish(["CAPTION_LIMIT", "CAPTION_BACKLOG_LIMIT", "CAPTION_ACK_BACKLOG_LIMIT"].includes(error?.code) ? error.code : "CAPTION_FORMAT_UNKNOWN");
     } finally {
       if (decoding === s) decoding = null;
       if (life.terminal?.generation === s.generation) life.terminal.stats.inFlight = 0;
@@ -395,7 +416,7 @@
       const target = choices[0]; life.clearTerminal();
       const s = { owner: captureId, meetingId, connection: target, assisted, entries: new Set(), selected: null,
         records: new Map(), speakers: new Map(), characters: 0, started: now(), queue: [], reader: null,
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, queued: 0, inFlight: 0 } };
+        stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0 } };
       life.activate(s);
       try {
         for (const entry of target.channels) if (!entry.owned && captionLabels.has(entry.label) && entry.channel.ordered && ["open", "connecting"].includes(entry.channel.readyState)) s.entries.add(entry);
