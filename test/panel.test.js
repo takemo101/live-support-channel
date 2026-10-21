@@ -531,3 +531,12 @@ test("when only unusable data has arrived the status says so while the capture k
   s.fixture.diagnostics = { dropped: 49, accepted: 0, baselineExcluded: 0 }; s.elements.refresh.click(); await turn();
   assert.doesNotMatch(s.elements.status.textContent, /字幕として使えないデータだけ/);
 });
+test("roster counters and the structure of an empty device list are shown, nothing else", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { names: 0, rosterRpc: 4, rosterSync: 1, rosterSyncNames: 0, rosterChannel: 2, selfKnown: 0, rosterShape: "2:2(2:2(1:2))", secret: "PRIVATE" };
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /名簿=0／RPC観測=4／同期応答=1／同期名簿=0／名簿通信=2／自分ID=0/);
+  assert.match(s.elements.status.textContent, /名簿形=2:2\(2:2\(1:2\)\)/);
+  s.fixture.diagnostics = { rosterShape: "SECRET text", secret: "PRIVATE" }; s.elements.refresh.click(); await turn();
+  assert.ok(!s.elements.status.textContent.includes("SECRET") && !s.elements.status.textContent.includes("PRIVATE"));
+});

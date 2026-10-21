@@ -276,8 +276,15 @@
   }
   // Meet sends the full device list (everyone already in the meeting, and yourself) only in the response of SyncMeetingSpaceCollections;
   // the "collections" channel carries just the changes after that. The own device id shows up in that request and in CreateMeetingDevice.
-  const SYNC_URL = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections";
-  const DEVICE_URL = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice";
+  const SYNC_PATH = "/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections";
+  const DEVICE_PATH = "/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice";
+  // Counters only (what the panel shows when names are missing): how many of Meet's own RPC calls were seen, how many device lists were read and how many names they gave.
+  const rosterStats = { rpc: 0, sync: 0, syncNames: 0, channel: 0, shape: "" };
+  const rpcKind = url => {
+    if (!url.includes("/$rpc/") || !(url.startsWith("https://meet.google.com/") || (url.startsWith("/") && !url.startsWith("//")))) return null;
+    rosterStats.rpc++;
+    return url.includes(SYNC_PATH) ? "sync" : url.includes(DEVICE_PATH) ? "device" : null;
+  };
   const SELF_PATTERN = /spaces\/[A-Za-z0-9_-]{1,64}\/devices\/[A-Za-z0-9_-]{1,64}/;
   let selfDevice = null;
   const latin1 = bytes => { let out = ""; for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]); return out; };
@@ -288,23 +295,33 @@
     if (Buffer.isView(body) && body.byteLength <= LIMIT) return latin1(new Bytes(body.buffer, body.byteOffset, body.byteLength));
     return null;
   }
-  async function inspectResponse(url, response) {
+  // The response body is base64 text (as the app's own client reads it) or, failing that, plain protobuf bytes.
+  async function inspectResponse(kind, response) {
     try {
       if (!response || response.ok === false || typeof response.clone !== "function") return;
-      const text = await response.clone().text();
-      if (typeof text !== "string" || text.length > LIMIT * 2) return;
-      const raw = nativeAtob(text.trim()), bytes = new Bytes(raw.length);
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-      if (url === DEVICE_URL) { noteSelf(latin1(bytes), true); return; }
+      const buffer = await response.clone().arrayBuffer();
+      if (!(buffer instanceof Buffer) || buffer.byteLength > LIMIT * 2) return;
+      let bytes = new Bytes(buffer);
+      const text = latin1(bytes);
+      if (/^[A-Za-z0-9+/=_\s-]+$/.test(text)) {
+        try {
+          const raw = nativeAtob(text.replace(/\s/g, "").replace(/-/g, "+").replace(/_/g, "/")), decoded = new Bytes(raw.length);
+          for (let i = 0; i < raw.length; i++) decoded[i] = raw.charCodeAt(i);
+          bytes = decoded;
+        } catch {}
+      }
+      if (kind === "device") { noteSelf(latin1(bytes), true); return; }
       const before = roster.size;
       try { learnBytes(bytes); } catch {}
       if (roster.size === before && bytes.length > 5 && bytes[0] === 0) { try { learnBytes(bytes.subarray(5)); } catch {} }   // a gRPC-web frame header
+      rosterStats.sync++; rosterStats.syncNames += roster.size - before;
+      if (!rosterStats.syncNames) rosterStats.shape = shapeOf(bytes, 4).slice(0, 200);
     } catch {}
   }
   let rosterBusy = 0;
   function rosterFrame(event) {
     if (event.isTrusted !== true || rosterBusy >= 8) return;
-    rosterBusy++; learn(event.data).finally(() => { rosterBusy--; });
+    rosterStats.channel++; rosterBusy++; learn(event.data).finally(() => { rosterBusy--; });
   }
   const nameOf = speaker => {
     const device = deviceKey(speaker.device);
@@ -480,7 +497,7 @@
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
     return { status: "ready", source: "meet-rtc-experimental", platform: "Google Meet",
       meetings: id ? [{ id, title: "Google Meet（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, names: roster.size, profile: life.current?.selected?.label ?? "pending" } };
+      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, names: roster.size, rosterRpc: rosterStats.rpc, rosterSync: rosterStats.sync, rosterSyncNames: rosterStats.syncNames, rosterChannel: rosterStats.channel, selfKnown: selfDevice ? 1 : 0, ...(rosterStats.shape ? { rosterShape: rosterStats.shape } : {}), profile: life.current?.selected?.label ?? "pending" } };
   }
   function command(params = {}) {
     const { action, meetingId, captureId, assistCaptions } = params;
@@ -533,11 +550,12 @@
     page.fetch = function (...args) {
       let url = "";
       try { const input = args[0]; url = typeof input === "string" ? input : String(input?.url ?? ""); } catch {}
-      if (url === SYNC_URL) { try { noteSelf(bodyText(args[1]?.body), false); } catch {} }
+      let kind = null; try { kind = rpcKind(url); } catch {}
+      if (kind === "sync") { try { noteSelf(bodyText(args[1]?.body), false); } catch {} }
       const result = nativeFetch.apply(this, args);
-      if (url === SYNC_URL || url === DEVICE_URL) { try { result.then(response => { void inspectResponse(url, response); }, () => {}); } catch {} }
+      if (kind) { try { result.then(response => { void inspectResponse(kind, response); }, () => {}); } catch {} }
       return result;
     };
   } catch {}
-  page.addEventListener("pagehide", () => { roster.clear(); selfDevice = null; finish("MEETING_CHANGED"); });
+  page.addEventListener("pagehide", () => { roster.clear(); selfDevice = null; Object.assign(rosterStats, { rpc: 0, sync: 0, syncNames: 0, channel: 0, shape: "" }); finish("MEETING_CHANGED"); });
 })();

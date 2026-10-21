@@ -36,16 +36,18 @@ const messages = {
   READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
 };
 export function statistics(d) {
-  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"], ["frame", "形式不正"], ["utterance", "発話なし"], ["id", "ID不正"], ["device", "話者ID不正"], ["binary", "非バイナリ"]]
+  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["rosterRpc", "RPC観測"], ["rosterSync", "同期応答"], ["rosterSyncNames", "同期名簿"], ["rosterChannel", "名簿通信"], ["selfKnown", "自分ID"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"], ["frame", "形式不正"], ["utterance", "発話なし"], ["id", "ID不正"], ["device", "話者ID不正"], ["binary", "非バイナリ"]]
     .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
     .map(([key, label]) => `${label}=${d[key]}`);
   // Which Meet caption profile (a fixed vocabulary) the capture settled on.
   const profile = ["captions", "captions_v2"].includes(d?.profile) ? [`方式=${d.profile}`] : [];
   // Structure of the first unusable frames (field numbers and wire types only, e.g. captions_v2:#58:1:2(1:0,3:2(6:2))): never content.
   const shapes = Array.isArray(d?.shapes) ? d.shapes.filter(v => typeof v === "string" && /^[a-z0-9_]{1,16}:#\d{1,6}:[0-9:,()!]{0,200}$/.test(v)).slice(0, 3) : [];
+  // Structure of the device-list response when it gave no names (field numbers and wire types only).
+  const rosterShape = typeof d?.rosterShape === "string" && /^[0-9:,()!]{1,200}$/.test(d.rosterShape) ? [`名簿形=${d.rosterShape}`] : [];
   // Frames keep arriving but none is a usable caption (yet): say so, since nothing else would show it while the capture keeps running.
   const only = Number.isSafeInteger(d?.dropped) && d.dropped >= 50 && !(d.accepted > 0) && !(d.baselineExcluded > 0) ? ["字幕として使えないデータだけが届いています（形=を報告してください）"] : [];
-  return [...counts, ...profile, ...(shapes.length ? [`形=${shapes.join(" | ")}`] : []), ...only].join("／");
+  return [...counts, ...profile, ...(shapes.length ? [`形=${shapes.join(" | ")}`] : []), ...rosterShape, ...only].join("／");
 }
 export function describe(result) {
   const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";
