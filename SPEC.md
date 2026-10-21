@@ -62,7 +62,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 ランチャーの安全設定：
 
-- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill`。
+- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill,WebSearch,WebFetch`（`LIVE_SUPPORT_WEB=0` で `Read,Glob,Grep,Skill`）。`permissions.allow` は `WebSearch` のみ（WebFetchは手動承認）。検索語はエージェントが会話から作るため、skillが一般的な語だけを求める（話者名・社名・案件名・金額・字幕の文章・画面の内容を含めない）。これは指示であり、検査ではない。
 - `--restricted`、`--permission-mode manual`。bypassは使わず、managed設定が優先。
 - `--settings` でhooks、SkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories` とRead deny（.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先）を指定。
 - `--plugin-dir` と `--append-system-prompt-file` で同じ `skills/meeting/SKILL.md` をそのセッションだけに使用。初期ユーザー依頼で会議モードを開始。
@@ -246,7 +246,7 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 
 MAIN worldはページと同じJS環境で、OS／ページ隔離のsandboxではない。transport tokenは拡張パネルにのみ保持する。字幕・話者情報は非信頼データとして扱い、命令・ツール権限承認には使わない。自作channelの停止は元の会議接続を停止しない。
 
-ブリッジは本文をログ・ファイルへ保存しないが、ページ・パネルのメモリやClaude／Anthropic側には残り得る。転送字幕と参照資料の外部送信同意を別に確認する。受信時刻／初回IDの除外は、生成時刻での完全な区間分離ではない。
+ブリッジは本文をログ・ファイルへ保存しないが、ページ・パネルのメモリやClaude／Anthropic側には残り得る。転送字幕と参照資料の外部送信同意を別に確認する。Web検索を有効にすると、会話から作られた検索語が検索サービスへ送られる（無効化：`LIVE_SUPPORT_WEB=0`）。受信時刻／初回IDの除外は、生成時刻での完全な区間分離ではない。
 
 非機密の本人管理会議での受入項目：早期注入、標準字幕ON/OFF、購読と実際のwire互換、初回ID／修正の非転送、新ID／修正の受信、pause／stop／非表示／移動／lease、元の字幕・音声・会議が維持されること、氏名の非推測、AIの根拠と未確定事項、実Claudeでの秘密・dir外Read拒否と編集／Shell非公開、助言停止と転送停止の区別。TeamsとZoomは字幕の表示が必要で、Teamsはセレクタ・話者ラベルの構造、Zoomはセレクタ・iframe構造・話者のアバター同一視が実機で成立するかも確認する。
 
