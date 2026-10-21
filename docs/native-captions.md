@@ -74,3 +74,11 @@ lease失効だけは、パネルが新しい所有者でrecoverを呼んで同�
 確認済み：Nodeの合成wire／境界テスト、独立Chrome profileのローカルRTC接続による合成packet→decode／ACK／pause／lease→実HTTP／SDK MCP通知。テスト用Meet URL stubであり、実Meetではない。
 
 未確認：現在のMeetの通信、document_start拡張の実ロードとサイトCSP、実DevToolsから実会議・実Claude／Haiku、実権限強制、長時間の欠落率・費用。まず本人管理の非機密テスト会議で受入確認する。
+
+## Tactiq 3.1.7185 との比較メモ（静的解析・実機未確認）
+
+- **購読**：Tactiqは字幕開始時に、自分で `captions` と `captions_v2` のチャネルを（ordered・maxRetransmits 10で）作り、さらにMeet側が作った（リモートの）同名チャネルも観測する。受信は `captions_v2` が素のprotobuf（Packet.utterance＝id・version・caption{text・languageCode・deviceId}）、`captions` がgzip（先頭または3バイト目）＋ラッパーのprotobufで、protobufとして使えない旧形式の保険にバイト列のパターン探索を持つ。
+- **許容**：不正・不要なフレームは `rejected` にして無視し、取得は止めない。protobufの0は送られないので、versionの欠落は0。
+- **名簿**：`collections` チャネルのprotobuf（deviceId→deviceName）。`collections`・`meet_messages` の他のメッセージはチャットで、字幕ではない。
+- **言語設定の再送**：チャネルを採用・作成したとき、観測済みの字幕言語の設定コマンドを `media-session` へ再送する（当方は実験オプション「字幕がOFFでも開始」のときだけ書き込む）。
+- **当方の対応**：デコードはprotobuf並みに緩く、使えないフレームは理由別に数え、チャネルごとに見切る（使えないまま50件でそのチャネルだけ放棄し、1回だけ自前の購読を試し、最後のチャネルも使えないときだけ停止）。止まったときは、最初の使えないフレームの構造（field番号とwire型のみ）をパネルに出す。

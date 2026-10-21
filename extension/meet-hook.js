@@ -273,12 +273,64 @@
     rosterBusy++; learn(event.data).finally(() => { rosterBusy--; });
   }
   const nameOf = speaker => roster.get(deviceKey(speaker.device)) || `話者 ${speaker.number}（名前未確認）`;
+  // Structure only (field numbers and wire types, never values): lets a mismatch with the real wire be diagnosed without any caption text.
+  // A length-delimited field is opened only if it holds a control byte, which plain text never does.
+  function shapeOf(bytes, depth = 3) {
+    const parts = [], cursor = { pos: 0 };
+    try {
+      while (cursor.pos < bytes.length && parts.length < 12) {
+        const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
+        if (!field || field > 1000) { parts.push("!"); break; }
+        if (wire === 0) { varint(bytes, cursor); parts.push(field + ":0"); }
+        else if (wire === 1 || wire === 5) { cursor.pos += wire === 1 ? 8 : 4; if (cursor.pos > bytes.length) { parts.push("!"); break; } parts.push(field + ":" + wire); }
+        else if (wire === 2) {
+          const length = Number(varint(bytes, cursor)); if (cursor.pos + length > bytes.length) { parts.push("!"); break; }
+          const inner = bytes.subarray(cursor.pos, cursor.pos + length); cursor.pos += length;
+          const nested = depth > 1 && length > 1 && inner.some(b => b < 0x20) ? shapeOf(inner, depth - 1) : "";
+          parts.push(field + ":2" + (nested && !nested.includes("!") ? "(" + nested + ")" : ""));
+        } else { parts.push("!"); break; }
+      }
+    } catch { parts.push("!"); }
+    return parts.join(",");
+  }
+  // Subscribes with channels of our own, the way the app's own client does (both profiles, ordered, limited retransmits).
+  function subscribe(s) {
+    const target = s.connection;
+    for (const label of ["captions_v2", "captions"]) {
+      const channel = create.call(target.peer, label, { ordered: true, maxRetransmits: 10 });
+      if (!valid(s)) { closeOwned({ channel, owned: true }); return "ended"; }
+      let entry;
+      try { entry = attach(target, channel, true); }
+      catch (error) { closeOwned({ channel, owned: true }); throw error; }
+      if (!valid(s)) { closeOwned({ channel, owned: true }); return "ended"; }
+      if (!entry) { closeOwned({ channel, owned: true }); fail("CAPTION_SUBSCRIPTION_FAILED"); }
+      s.entries.add(entry);
+    }
+    s.ownTried = true; return null;
+  }
+  // A channel whose frames are never usable is given up on by itself; the capture stops only when no channel is left (after trying our own subscription once).
+  function abandon(s, entry) {
+    s.entries.delete(entry); closeOwned(entry);
+    if (s.entries.size || s.stats.accepted + s.stats.baselineExcluded > 0) return;
+    if (!s.ownTried) {
+      try { if (subscribe(s) === null && s.entries.size) return; } catch { finish("CAPTION_SUBSCRIPTION_FAILED"); return; }
+    }
+    if (life.current === s && !s.entries.size) throw invalid();
+  }
+  function reject(s, entry, reason, bytes) {
+    s.stats[reason] = (s.stats[reason] ?? 0) + 1; s.stats.dropped++; entry.junk++;
+    if (bytes && s.stats.shapes.length < 3) {
+      const shape = `${entry.label}:#${bytes.length}:${shapeOf(bytes)}`;
+      if (!s.stats.shapes.includes(shape)) s.stats.shapes.push(shape);
+    }
+    if (entry.junk >= 50 && entry.good === 0) abandon(s, entry);
+  }
   function receive(entry, event) {
     const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
     if (s.stats.queued >= 8) { finish("CAPTION_BACKLOG_LIMIT"); return; }
     let data = event.data;
-    if (!(data instanceof BinaryBlob || data instanceof Buffer || Buffer.isView(data))) { life.guard(s, () => { s.stats.binary = (s.stats.binary ?? 0) + 1; life.drop(s); }); return; }
+    if (!(data instanceof BinaryBlob || data instanceof Buffer || Buffer.isView(data))) { life.guard(s, () => reject(s, entry, "binary", null)); return; }
     try { payloadSize(data); }
     catch (error) { if (life.current === s) finish(error?.code === "CAPTION_LIMIT" ? error.code : "CAPTION_FORMAT_UNKNOWN"); return; }
     if (!valid(s)) return;
@@ -294,9 +346,13 @@
         s.stats.inFlight = 1;
         try {
           if (!s.entries.has(job.entry)) continue;
-          const bytes = await unpack(data, job.entry.label, s);
+          let bytes;
+          try { bytes = await unpack(data, job.entry.label, s); }
+          catch (error) { if (error?.code === "CAPTION_LIMIT") throw error; if (valid(s)) reject(s, job.entry, "frame", null); continue; }
           if (!bytes || !valid(s) || !s.entries.has(job.entry)) continue;
-          const packet = decode(bytes, job.entry.label); if (typeof packet === "string") { s.stats[packet] = (s.stats[packet] ?? 0) + 1; life.drop(s); } else if (packet) ingest(s, job.entry, packet);
+          const packet = decode(bytes, job.entry.label);
+          if (typeof packet === "string") reject(s, job.entry, packet, bytes);
+          else { job.entry.good++; if (packet) ingest(s, job.entry, packet); }
         } finally { s.stats.queued = Math.max(0, s.stats.queued - 1); s.stats.inFlight = 0; }
       }
     } catch (error) {
@@ -323,7 +379,7 @@
     if (!["captions", "captions_v2", "collections", "media-session"].includes(label)) return null;
     for (const entry of connection.channels) if (entry.channel === channel) return entry;
     if (connection.channels.size >= 32) { prepareError = "RTC_RESOURCE_LIMIT"; finish(prepareError); return null; }
-    const entry = { channel, label, owned }; connection.channels.add(entry);
+    const entry = { channel, label, owned, junk: 0, good: 0 }; connection.channels.add(entry);
     try {
       if (captionLabels.has(label)) channel.addEventListener("message", event => receive(entry, event));
       else if (label === "collections") channel.addEventListener("message", rosterFrame);
@@ -416,20 +472,11 @@
       const target = choices[0]; life.clearTerminal();
       const s = { owner: captureId, meetingId, connection: target, assisted, entries: new Set(), selected: null,
         records: new Map(), speakers: new Map(), characters: 0, started: now(), queue: [], reader: null,
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0 } };
+        stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0, shapes: [] }, ownTried: false };
       life.activate(s);
       try {
         for (const entry of target.channels) if (!entry.owned && captionLabels.has(entry.label) && entry.channel.ordered && ["open", "connecting"].includes(entry.channel.readyState)) s.entries.add(entry);
-        if (!s.entries.size) for (const label of ["captions_v2", "captions"]) {
-          const channel = create.call(target.peer, label, { ordered: true, maxRetransmits: 10 });
-          if (!valid(s)) { closeOwned({ channel, owned: true }); return { status: "ended", code: "CAPTURE_CHANGED" }; }
-          let entry;
-          try { entry = attach(target, channel, true); }
-          catch (error) { closeOwned({ channel, owned: true }); throw error; }
-          if (!valid(s)) { closeOwned({ channel, owned: true }); return { status: "ended", code: "CAPTURE_CHANGED" }; }
-          if (!entry) { closeOwned({ channel, owned: true }); fail("CAPTION_SUBSCRIPTION_FAILED"); }
-          s.entries.add(entry);
-        }
+        if (!s.entries.size && subscribe(s) === "ended") return { status: "ended", code: "CAPTURE_CHANGED" };
       } catch {
         if (life.current !== s) return { status: "ended", code: "CAPTURE_CHANGED" };
         finish("CAPTION_SUBSCRIPTION_FAILED"); return { status: "unavailable", code: "CAPTION_SUBSCRIPTION_FAILED" };

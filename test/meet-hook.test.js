@@ -229,14 +229,42 @@ test("an oversize frame stops the capture and never reaches the async queue", as
   const f = fixture(t); f.command("start"); f.channel.message(new Uint8Array(262145)); await f.drain();
   const read = f.command("read"); assert.equal(read.code, "CAPTION_LIMIT"); assert.equal(read.blocks, undefined); assert.equal(read.diagnostics.queued, 0);
 });
-test("only a stream of nothing usable stops the capture as an unknown format", async t => {
+test("a channel that never delivers anything usable is given up on by itself; our own subscription is tried once; only then does the capture stop", async t => {
+  const junk = Uint8Array.of(10, 255);
   const f = fixture(t); f.command("start");
   f.channel.message(packet(1, "baseline")); await f.drain();
-  for (let i = 0; i < 80; i++) { f.channel.message(Uint8Array.of(10, 255)); await f.drain(); }
-  assert.equal(f.command("read").status, "live", "junk next to real captions is tolerated");
-  const g = fixture(t); g.command("start");
-  for (let i = 0; i < 60; i++) { g.channel.message(Uint8Array.of(10, 255)); await g.drain(); }
-  assert.equal(g.command("read").code, "CAPTION_FORMAT_UNKNOWN");
+  for (let i = 0; i < 80; i++) { f.channel.message(junk); await f.drain(); }
+  assert.equal(f.command("read").status, "live", "junk next to real captions never stops anything");
+  const g = fixture(t); g.command("start"); const before = g.pc.channels.length;
+  for (let i = 0; i < 50; i++) { g.channel.message(junk); await g.drain(); }
+  assert.equal(g.command("read").status, "live", "the junk channel alone is abandoned, not the capture");
+  const own = g.pc.channels.slice(before); assert.deepEqual(own.map(c => c.label).sort(), ["captions", "captions_v2"], "our own subscription is created once, like the app's own client");
+  for (const channel of own) for (let i = 0; i < 50; i++) { channel.message(junk); await g.drain(); }
+  const ended = g.command("read"); assert.equal(ended.code, "CAPTION_FORMAT_UNKNOWN"); assert.equal(g.pc.channels.length, before + 2, "never subscribes twice");
+});
+test("a good channel is used even while another one only delivers junk", async t => {
+  const f = fixture(t, { native: false }); f.command("start");
+  const [v2, legacy] = f.pc.channels.filter(c => ["captions_v2", "captions"].includes(c.label));
+  v2.message(packet(1, "baseline")); await f.drain();
+  for (let i = 0; i < 70; i++) { legacy.message(Uint8Array.of(10, 255)); await f.drain(); }
+  v2.message(packet(2, "real caption")); await f.drain();
+  const read = f.command("read"); assert.equal(read.status, "live"); assert.deepEqual(plain(read.blocks.map(b => b.transcript)), ["real caption"]);
+});
+test("a frame with a bad gzip body is dropped like any other unusable frame", async t => {
+  const f = fixture(t, { label: "captions" }); f.command("start");
+  f.channel.message(Uint8Array.of(31, 139, 8, 0, 1, 2, 3)); await f.drain();
+  f.channel.message(gzipSync(packet(1, "baseline", 1, "d", "captions"))); await f.drain();
+  const read = f.command("read"); assert.equal(read.status, "live"); assert.equal(read.diagnostics.frame, 1);
+});
+test("unusable frames are recorded by structure only (field numbers and wire types), never by content", async t => {
+  const f = fixture(t); f.command("start");
+  f.channel.message(blob(1, bytes(scalar(1, 5), blob(3, bytes(string(3, "SECRET TEXT"), string(6, "device")))))); await f.drain();   // no usable device? has one; make it unusable via id 0
+  f.channel.message(blob(1, bytes(scalar(1, 0), blob(3, bytes(string(3, "SECRET TEXT"), string(6, "device")))))); await f.drain();
+  f.channel.message(bytes(Uint8Array.of(10, 255), new TextEncoder().encode("SECRET TEXT"))); await f.drain();
+  const d = plain(f.command("read").diagnostics);
+  assert.ok(d.shapes.length >= 1 && d.shapes.length <= 3);
+  for (const shape of d.shapes) { assert.match(shape, /^captions_v2:#\d+:[0-9:,()!]*$/); assert.ok(!shape.includes("SECRET")); }
+  assert.ok(d.shapes.some(shape => /1:0,3:2\(3:2,6:2\)/.test(shape)), "the nesting of the first frame is visible: " + d.shapes.join(" | "));
 });
 test("frames decode like protobuf: zero-valued fields are absent, unknown and repeated fields are tolerated", async t => {
   const f = fixture(t); f.command("start");
