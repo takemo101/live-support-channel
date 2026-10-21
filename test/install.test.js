@@ -37,6 +37,17 @@ test("help does not create a token or launch Claude; unknown commands fail", asy
   await assert.rejects(access(f.runtime));
   assert.equal(f.run("unknown").status, 1);
 });
+test("agents prints runnable commands for omp, pi and agy that point at files that exist, and writes nothing", async t => {
+  const f = await fixture(t);
+  const p = f.run("agents");
+  assert.equal(p.status, 0, p.stderr);
+  await assert.rejects(access(f.runtime));
+  for (const path of p.stdout.match(/\/[^\s"]+\.(?:js|md)\b/g)) await access(path);
+  assert.match(p.stdout, /omp -e \S+integrations\/pi\/live-support\.js --append-system-prompt \S+SKILL\.md/);
+  assert.match(p.stdout, /\bpi -e /); assert.match(p.stdout, /mcp\(live-support\/get_captions\)/); assert.match(p.stdout, /LIVE_SUPPORT_TOOLS/);
+  const pack = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.ok(pack.files.includes("integrations/"), "the extension ships with the package");
+});
 test("setup installs extension assets outside projects without exposing the token", async t => {
   const f = await fixture(t);
   const p = f.run("setup");

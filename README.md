@@ -96,6 +96,10 @@ Skillは [`skills/meeting/SKILL.md`](skills/meeting/SKILL.md) にあります。
 
 Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku live-support claude` と起動できます。実Haikuでの品質・速度・費用は未検証です。
 
+### Claude Code 以外で使う（omp・pi・agy）
+
+字幕を受け取る部分だけが違います。`live-support agents` で、手元のパスを入れたコマンドを確認できます。omp と pi は拡張（push）、agy はMCPのツール `get_captions`（pull）です。実 omp・pi では、合成の字幕で受信から次のターンの開始までを確認しました。agy は字幕の取得までは未確認です。詳細・注意は [docs/other-agents.md](docs/other-agents.md) を参照してください。
+
 ### プロジェクトを切り替える
 
 1. 補助パネルを停止する。
@@ -148,6 +152,7 @@ node bin/live-support.js --help
 
 - [使い方・CLI・データ形式・動作仕様：SPEC.md](SPEC.md)
 - [字幕readerの根拠・制限・診断](docs/native-captions.md)
+- [Claude Code 以外で使う（omp・pi・agy）](docs/other-agents.md)
 - [REAが分析に役立った点と限界](docs/rea-analysis-report.md)
 - [会議支援Skill](skills/meeting/SKILL.md)
 - [Claude Code Channels](https://code.claude.com/docs/en/channels) / [Channels reference](https://code.claude.com/docs/en/channels-reference)

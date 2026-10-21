@@ -1,22 +1,41 @@
 #!/usr/bin/env node
-import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { runtimeDirectory } from "../server/runtime.js";
-import { prepareToken } from "../server/token.js";
+import { prepareToken, renewToken } from "../server/token.js";
 
-const help = `Live Support — meeting captions (Meet, Teams, Zoom) to one Claude Code project at a time
+const help = `Live Support — meeting captions (Meet, Teams, Zoom) to one coding-agent session at a time
   live-support setup    Install Chrome extension assets in your user directory
   live-support claude   Launch a meeting-enabled Claude Code in the current project
   live-support token    Print the pairing token locally (never share it)
+  live-support agents   Show how to use Live Support with omp, pi and agy (prints commands only)
   live-support --help   Show this help
 `;
 
+// Commands only: nothing is written to the other agents' configuration.
+function agents(root) {
+  const extension = join(root, "integrations/pi/live-support.js"), skill = join(root, "skills/meeting/SKILL.md"), server = join(root, "server/main.js");
+  return [
+    "omp (push: captions arrive as follow-up messages that start a turn):",
+    `  omp -e ${extension} --append-system-prompt ${skill}`,
+    "pi (same extension API as omp):",
+    `  pi -e ${extension} --append-system-prompt ${skill}`,
+    "  Then pair the Chrome panel with: live-support token   (the token is renewed each time the agent starts)",
+    "",
+    "agy (pull: the agent reads captions with the get_captions tool; there is no push into an agy session):",
+    "  1. In your project, .agents/mcp_config.json:",
+    JSON.stringify({ mcpServers: { "live-support": { command: "node", args: [server], env: { LIVE_SUPPORT_TOOLS: "1" } } } }, null, 2).replace(/^/gm, "     "),
+    '  2. Allow the tool in ~/.gemini/antigravity-cli/settings.json: { "permissions": { "allow": ["mcp(live-support/get_captions)"] } }',
+    "  3. Ask agy to call get_captions regularly (pass the returned cursor back as `after`). Pair the panel with: live-support token",
+    "",
+    "Claude Code: live-support claude",
+  ].join("\n");
+}
 async function existing(path) {
   try { return await lstat(path); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
@@ -36,13 +55,6 @@ async function setup(directory) {
   }
   return destination;
 }
-async function renewToken(directory) {
-  const temp = join(directory, ".token-" + randomUUID());
-  try {
-    await writeFile(temp, randomBytes(32).toString("base64url") + "\n", { mode: 0o600, flag: "wx" });
-    await rename(temp, join(directory, "token"));
-  } finally { await rm(temp, { force: true }); }
-}
 async function requireFreePort() {
   const port = Number(process.env.LIVE_SUPPORT_PORT ?? 43821);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid receiver port");
@@ -54,8 +66,9 @@ async function requireFreePort() {
 }
 async function main() {
   const [command = "--help", ...extra] = process.argv.slice(2);
-  if (extra.length || !["setup", "claude", "token", "--help", "-h"].includes(command)) throw new Error("Unknown command. Run live-support --help.");
+  if (extra.length || !["setup", "claude", "token", "agents", "--help", "-h"].includes(command)) throw new Error("Unknown command. Run live-support --help.");
   if (command === "--help" || command === "-h") { console.log(help); return; }
+  if (command === "agents") { console.log(agents(fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, ""))); return; }
   const directory = runtimeDirectory();
   if (command === "token") { console.log(await prepareToken(directory)); return; }
   if (command === "setup") {
