@@ -37,7 +37,7 @@ const shotProblems = {
   worker: "拡張の背景処理に届きません。chrome://extensions で拡張を再読み込みしてください",
   host: "会議のタブではありません", inactive: "会議のタブが前面にありません", rate: "撮影が続けて呼ばれました",
   permission: "撮影の権限がありません。拡張を再読み込みし、権限の確認が出たら許可してください", failed: "撮影に失敗しました",
-  format: "撮影結果の形式が想定外です", decode: "画像の変換に失敗しました", upload: "画像の送信に失敗しました",
+  timeout: "撮影が時間内に終わりませんでした。30秒間は撮影を休みます", format: "撮影結果の形式が想定外です", decode: "画像の変換に失敗しました", upload: "画像の送信に失敗しました",
 };
 export const shotProblem = code => Object.hasOwn(shotProblems, code) ? shotProblems[code] : shotProblems.failed;
 export function statistics(d) {

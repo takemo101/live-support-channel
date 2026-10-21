@@ -117,7 +117,7 @@ async function main() {
     const skillPath = join(pluginRoot, "skills/meeting/SKILL.md");
     const canonicalRuntime = await realpath(directory);
     // Web search lets the meeting advice check current facts (versions, CVEs, news). The queries are written by the agent from the conversation,
-    // so the skill restricts them to generic terms; LIVE_SUPPORT_WEB=0 turns the web tools off. WebFetch stays behind a manual approval.
+    // so the skill restricts them to generic terms and to one or two quick searches; LIVE_SUPPORT_WEB=0 turns web search off. There is no WebFetch.
     const web = process.env.LIVE_SUPPORT_WEB !== "0";
     const settings = {
       disableAllHooks: true,
@@ -138,7 +138,7 @@ async function main() {
     console.error("Meeting support: project read-only" + (web ? "; web search on (LIVE_SUPPORT_WEB=0 to disable)" : "") + "; pair with a fresh token from live-support token.");
     child = spawn("claude", [
       "--mcp-config", JSON.stringify(config), "--strict-mcp-config",
-      "--tools", web ? "Read,Glob,Grep,Skill,WebSearch,WebFetch" : "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
+      "--tools", web ? "Read,Glob,Grep,Skill,WebSearch" : "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
       "--add-dir", screens, "--plugin-dir", pluginRoot, "--settings", JSON.stringify(settings),
       "--append-system-prompt-file", skillPath,
       "--dangerously-load-development-channels", "server:live-support", "--",

@@ -33,7 +33,7 @@ function setup(t, fetcher, storage, screenshot) {
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => { timers.delete(id); }, storage, screenshot, now: () => clock.t,
   });
   t.after(() => panel.dispose());
-  return { elements, block, fixture, calls, contexts, actions, navigation, clock,
+  return { elements, block, fixture, calls, contexts, actions, navigation, clock, timers,
     capture: () => timers.get(500)?.(), tick: async ms => { clock.t += ms; await timers.get(250)?.(); }, flush: async () => { clock.t += 5000; await timers.get(250)?.(); },
     // One read, then enough quiet time for the default batching to be due, then the send decision.
     async poll() { await timers.get(500)?.(); clock.t += 5000; await timers.get(250)?.(); },
@@ -532,4 +532,29 @@ test("when no screenshot can be taken or uploaded the status says why, from a fi
   const recover = setup(t, undefined, undefined, shooter(coded("inactive"), fakeShot(10))); await start(recover);
   fresh(recover, "a", "one"); await recover.poll(); assert.match(recover.elements.status.textContent, /前面にありません/);
   fresh(recover, "b", "two"); await recover.poll(); assert.match(recover.elements.status.textContent, /画像=1/); assert.doesNotMatch(recover.elements.status.textContent, /前面にありません/);
+});
+test("a screenshot that never answers cannot hold the captions back, and later batches skip screenshots for a while", async t => {
+  let asked = 0; const hang = () => { asked++; return new Promise(() => {}); };
+  const s = setup(t, undefined, undefined, hang); await start(s);
+  fresh(s, "a", "first words");
+  const polled = s.poll(); await turn();
+  assert.equal(urls(s, "/captions").length, 0, "still waiting for the picture");
+  s.timers.get(4000)(); await polled;
+  assert.equal(urls(s, "/captions").length, 1, "the captions went out without it");
+  assert.match(s.elements.status.textContent, /画像=0（撮影が時間内に終わりませんでした/);
+  fresh(s, "b", "second words"); await s.poll();
+  assert.equal(asked, 1, "no new attempt while screenshots rest"); assert.equal(urls(s, "/captions").length, 2);
+});
+test("default batching also sends when a new utterance starts during continuous speech, at most every 3 seconds", async t => {
+  const s = setup(t); await start(s);
+  fresh(s, "a", "x"); await s.capture();
+  for (let i = 0; i < 7; i++) { s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(500); await s.capture(); }
+  assert.equal(posts(s).length, 0, "3.5s of constant change, one utterance: still held");
+  fresh(s, "b", "the next utterance"); await s.capture(); await s.tick(250);
+  assert.equal(posts(s).length, 1, "the finished utterance goes out as the next one starts");
+  assert.deepEqual(JSON.parse(posts(s)[0].options.body).updates.map(b => b.transcript), ["x.......", "the next utterance"]);
+  s.fixture.snapshot.blocks.at(-1).transcript += " goes on"; await s.capture(); fresh(s, "c", "yet another"); await s.capture(); await s.tick(250);
+  assert.equal(posts(s).length, 1, "a boundary within 3s of the last send waits");
+  s.fixture.snapshot.blocks.at(-2).transcript += "!"; await s.tick(2800); await s.capture(); await s.tick(250);
+  assert.equal(posts(s).length, 2, "after 3s the boundary is honoured");
 });

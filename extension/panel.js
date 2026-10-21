@@ -6,18 +6,19 @@ import { captureScreenshot, similar } from "./screenshot.js";
 // Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
 // "5" and "30" send on a fixed cadence in seconds. A failed send is retried after RETRY ms.
 // READ/SEND are the poll and send-check periods; together with QUIET they are the delay the user feels after speaking (about QUIET + up to READ + SEND).
-const QUIET = 1200, MAX_HOLD = 10000, READ = 500, SEND = 250, RETRY = 5000, CADENCE = { 5: 5000, 30: 30000 };
+// SHOT_LIMIT: a screenshot that takes longer than this is abandoned, so it can never hold the captions back; screenshots then rest for SHOT_COOLDOWN.
+const QUIET = 1200, MAX_HOLD = 10000, READ = 500, SEND = 250, RETRY = 5000, SHOT_LIMIT = 4000, SHOT_COOLDOWN = 30000, BOUNDARY_GAP = 3000, CADENCE = { 5: 5000, 30: 30000 };
 const DESCRIPTION = { pause: "発話の区切りごと（最大10秒）", 5: "約5秒ごと", 30: "約30秒ごと" };
 // `screenshot()` resolves to { bytes (JPEG), signature } of the meeting tab, or null when none could be taken (inactive tab, rate limit, no permission).
 export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, screenshot, now = () => performance.now() }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
   let active = false, paused = false, busy = false, captionReady = false, failed = false, platform = "Google Meet";
-  let batch = "pause", lastChange = 0, pendingSince = null, lastSent = 0, retryAt = 0;
+  let batch = "pause", lastChange = 0, pendingSince = null, boundary = false, lastSent = 0, retryAt = 0;
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map(), signatures = new Map();
   // Screenshots: one is taken per batch (and reused if the batch is resent), uploaded just before it, and skipped while the screen looks unchanged.
-  let shotsOn = false, lastShot = null, shotsSent = 0, shotWhy = null;
+  let shotsOn = false, lastShot = null, shotsSent = 0, shotWhy = null, shotRestUntil = 0;
   const batchShots = new WeakMap();
   const status = message => { el("status").textContent = message; };
   function badge() {
@@ -63,18 +64,30 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       method: body ? "POST" : "GET",
       headers: { authorization: "Bearer " + pairingToken, ...(body ? { "content-type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), redirect: "error",
-      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(SHOT_LIMIT)]),
     });
     if (!response.ok) throw Object.assign(Error("受信先エラー HTTP " + response.status), { status: response.status, fatal: response.status >= 400 && response.status < 500 });
   }
+  // Resolves with the promise's value, or rejects with code "timeout" after `ms` (the panel's own injectable timer, so tests can drive it).
+  function within(promise, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setInterval(() => { clearInterval(timer); reject(Object.assign(new Error("timeout"), { code: "timeout" })); }, ms);
+      promise.then(value => { clearInterval(timer); resolve(value); }, error => { clearInterval(timer); reject(error); });
+    });
+  }
   async function takeShot() {
+    if (now() < shotRestUntil) return null;
     try {
-      const shot = await screenshot();
+      const shot = await within(screenshot(), SHOT_LIMIT);
       if (!shot?.bytes?.length) { shotWhy = "failed"; return null; }
       shotWhy = null;
       if (similar(lastShot, shot.signature)) return null;
       lastShot = shot.signature; return shot;
-    } catch (error) { shotWhy = typeof error?.code === "string" ? error.code : "failed"; return null; }
+    } catch (error) {
+      shotWhy = typeof error?.code === "string" ? error.code : "failed";
+      if (shotWhy === "timeout") shotRestUntil = now() + SHOT_COOLDOWN;
+      return null;
+    }
   }
   // A screenshot problem never blocks or stops the captions: the batch goes out either way.
   async function deliver(payload) {
@@ -88,7 +101,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
           });
           if (response.ok) { shotsSent++; batchShots.set(payload, null); shotWhy = null; } else shotWhy = "upload";
-        } catch { shotWhy = "upload"; }
+        } catch { shotWhy = "upload"; shotRestUntil = now() + SHOT_COOLDOWN; }
       }
     }
     await request("/captions", payload);
@@ -124,6 +137,8 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       if (!block || typeof block.messageId !== "string" || typeof block.transcript !== "string") throw Object.assign(Error("READ_FAILED"), { code: "READ_FAILED" });
       const key = JSON.stringify([block.messageId, block.deviceId ?? ""]), json = JSON.stringify(block);
       captured.set(key, block);
+      // A new utterance starting while earlier changes are still unsent means those utterances are finished: that is a boundary.
+      if (!signatures.has(key) && pendingSince !== null) boundary = true;
       if (signatures.get(key) !== json) { signatures.set(key, json); lastChange = now(); pendingSince ??= lastChange; }
     }
     let characters = 0;
@@ -167,7 +182,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   const due = () => {
     const at = now();
     if (at < retryAt) return false;
-    if (batch === "pause") return pendingSince !== null && (at - lastChange >= QUIET || at - pendingSince >= MAX_HOLD);
+    if (batch === "pause") return pendingSince !== null && (at - lastChange >= QUIET || at - pendingSince >= MAX_HOLD || (boundary && at - lastSent >= BOUNDARY_GAP));
     return at - lastSent >= CADENCE[batch];
   };
   async function flush() {
@@ -179,7 +194,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     try {
       await stream.update({ ...lastSnapshot, blocks: [...captured.values()] });
       if (!active || paused || run !== generation) return;
-      pendingSince = lastChange > sentAt ? lastChange : null;
+      pendingSince = lastChange > sentAt ? lastChange : null; boundary = false;
       status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (shotsOn ? "／画像=" + shotsSent + (shotWhy ? "（" + shotProblem(shotWhy) + "）" : "") : "") + (recoveries ? `／自動復旧=${recoveries}` : ""));
     } catch (error) {
       if (active && run === generation) {

@@ -62,7 +62,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 ランチャーの安全設定：
 
-- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill,WebSearch,WebFetch`（`LIVE_SUPPORT_WEB=0` で `Read,Glob,Grep,Skill`）。`permissions.allow` は `WebSearch` のみ（WebFetchは手動承認）。検索語はエージェントが会話から作るため、skillが一般的な語だけを求める（話者名・社名・案件名・金額・字幕の文章・画面の内容を含めない）。これは指示であり、検査ではない。
+- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill,WebSearch`（`LIVE_SUPPORT_WEB=0` で `Read,Glob,Grep,Skill`）。`permissions.allow` は `WebSearch` のみ。WebFetchは有効にしない（検索は1回の更新で1〜2回、結果の要約だけを使う）。検索語はエージェントが会話から作るため、skillが一般的な語だけを求める（話者名・社名・案件名・金額・字幕の文章・画面の内容を含めない）。これは指示であり、検査ではない。
 - `--restricted`、`--permission-mode manual`。bypassは使わず、managed設定が優先。
 - `--settings` でhooks、SkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories` とRead deny（.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先）を指定。
 - `--plugin-dir` と `--append-system-prompt-file` で同じ `skills/meeting/SKILL.md` をそのセッションだけに使用。初期ユーザー依頼で会議モードを開始。
