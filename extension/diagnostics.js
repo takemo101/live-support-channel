@@ -35,6 +35,14 @@ const messages = {
   EVALUATION_FAILED: "ページでの読取りに失敗しました。会議タブを再確認してください。",
   READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
 };
+// Why no screenshot was taken (codes come from screenshot.js / background.js; anything else reads as a plain failure).
+const shotProblems = {
+  worker: "拡張の背景処理に届きません。chrome://extensions で拡張を再読み込みしてください",
+  host: "会議のタブではありません", inactive: "会議のタブが前面にありません", rate: "撮影が続けて呼ばれました",
+  permission: "撮影の権限がありません。拡張を再読み込みし、権限の確認が出たら許可してください", failed: "撮影に失敗しました",
+  format: "撮影結果の形式が想定外です", decode: "画像の変換に失敗しました", upload: "画像の送信に失敗しました",
+};
+export const shotProblem = code => Object.hasOwn(shotProblems, code) ? shotProblems[code] : shotProblems.failed;
 export function statistics(d) {
   const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["rosterRpc", "RPC観測"], ["rosterSync", "同期応答"], ["rosterSyncNames", "同期名簿"], ["rosterChannel", "名簿通信"], ["selfKnown", "自分ID"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"], ["frame", "形式不正"], ["utterance", "発話なし"], ["id", "ID不正"], ["device", "話者ID不正"], ["binary", "非バイナリ"]]
     .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)

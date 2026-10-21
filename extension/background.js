@@ -12,7 +12,8 @@ async function capture(tabId) {
   const now = Date.now();
   if (now - last < 1000) return { ok: false, reason: "rate" };
   last = now;
-  return { ok: true, dataUrl: await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 }) };
+  try { return { ok: true, dataUrl: await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 }) }; }
+  catch (error) { return { ok: false, reason: /permission|activeTab|all_urls/i.test(String(error?.message)) ? "permission" : "failed" }; }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {

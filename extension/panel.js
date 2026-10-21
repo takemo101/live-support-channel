@@ -1,6 +1,6 @@
 import { readCaptions } from "./snapshot.js";
 import { CaptionStream } from "./stream.js";
-import { describe, statistics } from "./diagnostics.js";
+import { shotProblem, describe, statistics } from "./diagnostics.js";
 import { captureScreenshot, similar } from "./screenshot.js";
 
 // Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
@@ -16,7 +16,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map(), signatures = new Map();
   // Screenshots: one is taken per batch (and reused if the batch is resent), uploaded just before it, and skipped while the screen looks unchanged.
-  let shotsOn = false, lastShot = null, shotsSent = 0;
+  let shotsOn = false, lastShot = null, shotsSent = 0, shotWhy = null;
   const batchShots = new WeakMap();
   const status = message => { el("status").textContent = message; };
   function badge() {
@@ -69,10 +69,11 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   async function takeShot() {
     try {
       const shot = await screenshot();
-      if (!shot?.bytes?.length) return null;
+      if (!shot?.bytes?.length) { shotWhy = "failed"; return null; }
+      shotWhy = null;
       if (similar(lastShot, shot.signature)) return null;
       lastShot = shot.signature; return shot;
-    } catch { return null; }
+    } catch (error) { shotWhy = typeof error?.code === "string" ? error.code : "failed"; return null; }
   }
   // A screenshot problem never blocks or stops the captions: the batch goes out either way.
   async function deliver(payload) {
@@ -85,8 +86,8 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
             method: "POST", headers: { authorization: "Bearer " + pairingToken, "content-type": "image/jpeg" }, body: shot.bytes, redirect: "error",
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
           });
-          if (response.ok) { shotsSent++; batchShots.set(payload, null); }
-        } catch {}
+          if (response.ok) { shotsSent++; batchShots.set(payload, null); shotWhy = null; } else shotWhy = "upload";
+        } catch { shotWhy = "upload"; }
       }
     }
     await request("/captions", payload);
@@ -178,7 +179,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       await stream.update({ ...lastSnapshot, blocks: [...captured.values()] });
       if (!active || paused || run !== generation) return;
       pendingSince = lastChange > sentAt ? lastChange : null;
-      status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (shotsOn ? "／画像=" + shotsSent : "") + (recoveries ? `／自動復旧=${recoveries}` : ""));
+      status("字幕を転送中（" + DESCRIPTION[batch] + "）。\n" + lastSnapshot.statistics + "／送信済みバッチ=" + stream.run.sequence + (shotsOn ? "／画像=" + shotsSent + (shotWhy ? "（" + shotProblem(shotWhy) + "）" : "") : "") + (recoveries ? `／自動復旧=${recoveries}` : ""));
     } catch (error) {
       if (active && run === generation) {
         if (error.fatal) stop(error.message + "。停止しました。", true);

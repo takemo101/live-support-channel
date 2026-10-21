@@ -2,8 +2,11 @@
 // still looks like the previous one. Nothing here is sent anywhere.
 const MAX_EDGE = 1280, QUALITY = 0.6, GRID = [32, 18];
 
-export async function rasterize(dataUrl, { document = globalThis.document, createImageBitmap = globalThis.createImageBitmap, fetch = globalThis.fetch } = {}) {
-  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+// The data URL is decoded by hand: fetching it would be a connect-src violation under the extension pages' CSP (only the bridge is allowed there).
+export async function rasterize(dataUrl, { document = globalThis.document, createImageBitmap = globalThis.createImageBitmap, atob = globalThis.atob } = {}) {
+  const text = atob(dataUrl.slice(dataUrl.indexOf(",") + 1)), raw = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) raw[i] = text.charCodeAt(i);
+  const bitmap = await createImageBitmap(new Blob([raw], { type: "image/jpeg" }));
   try {
     const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
     const draw = (width, height) => { const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height; const context = canvas.getContext("2d", { willReadFrequently: true }); context.drawImage(bitmap, 0, 0, width, height); return { canvas, context }; };
@@ -22,8 +25,13 @@ export function similar(a, b, tolerance = 4) {
   return total / a.length <= tolerance;
 }
 
+// Throws an Error whose `code` is one of a fixed vocabulary (see diagnostics.js), so the panel can say why no picture was taken.
+const fail = code => Object.assign(Error(code), { code });
 export async function captureScreenshot(tabId, { chrome = globalThis.chrome, rasterize: shrink = rasterize } = {}) {
-  const reply = await chrome.runtime.sendMessage({ type: "live-support-screenshot", tabId });
-  if (!reply?.ok || typeof reply.dataUrl !== "string" || !reply.dataUrl.startsWith("data:image/jpeg;base64,")) return null;
-  return shrink(reply.dataUrl);
+  let reply;
+  try { reply = await chrome.runtime.sendMessage({ type: "live-support-screenshot", tabId }); } catch { throw fail("worker"); }
+  if (!reply) throw fail("worker");
+  if (!reply.ok) throw fail(["host", "inactive", "rate", "permission"].includes(reply.reason) ? reply.reason : "failed");
+  if (typeof reply.dataUrl !== "string" || !reply.dataUrl.startsWith("data:image/jpeg;base64,")) throw fail("format");
+  try { return await shrink(reply.dataUrl); } catch { throw fail("decode"); }
 }

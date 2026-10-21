@@ -540,3 +540,16 @@ test("roster counters and the structure of an empty device list are shown, nothi
   s.fixture.diagnostics = { rosterShape: "SECRET text", secret: "PRIVATE" }; s.elements.refresh.click(); await turn();
   assert.ok(!s.elements.status.textContent.includes("SECRET") && !s.elements.status.textContent.includes("PRIVATE"));
 });
+test("when no screenshot can be taken or uploaded the status says why, from a fixed vocabulary, and clears once one works", async t => {
+  const coded = code => Object.assign(new Error(code), { code });
+  const cases = [["worker", /背景処理に届きません/], ["inactive", /前面にありません/], ["permission", /権限がありません/], ["decode", /画像の変換/], ["<script>PRIVATE", /撮影に失敗/]];
+  for (const [code, pattern] of cases) {
+    const s = setup(t, undefined, undefined, shooter(coded(code))); await start(s); fresh(s, "a", "words"); await s.poll();
+    assert.match(s.elements.status.textContent, /画像=0（/); assert.match(s.elements.status.textContent, pattern, code); assert.ok(!s.elements.status.textContent.includes("PRIVATE"));
+  }
+  const up = setup(t, url => url.includes("/screenshots") ? { ok: false, status: 400 } : { ok: true, status: 202 }, undefined, shooter(fakeShot(10))); await start(up); fresh(up, "a", "words"); await up.poll();
+  assert.match(up.elements.status.textContent, /画像=0（画像の送信に失敗/);
+  const recover = setup(t, undefined, undefined, shooter(coded("inactive"), fakeShot(10))); await start(recover);
+  fresh(recover, "a", "one"); await recover.poll(); assert.match(recover.elements.status.textContent, /前面にありません/);
+  fresh(recover, "b", "two"); await recover.poll(); assert.match(recover.elements.status.textContent, /画像=1/); assert.doesNotMatch(recover.elements.status.textContent, /前面にありません/);
+});
