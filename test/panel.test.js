@@ -514,3 +514,11 @@ test("a screenshot whose upload failed is offered again with the resend, still f
   fail = false; await s.tick(5000);
   assert.equal(shot.calls, 1); assert.equal(urls(s, "/screenshots").length, 2); assert.equal(urls(s, "/captions").length, 2);
 });
+test("frame structures are shown only when they are pure structure (field numbers, wire types, a length)", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { shapes: ["captions_v2:#58:1:2(1:0,3:2(6:2))", "captions:#7:1:2,2:0!", "captions_v2:#9:hello world", "captions:#3:" + "1:0,".repeat(80), 5, "<script>PRIVATE"], secret: "PRIVATE" };
+  s.elements.refresh.click(); await turn();
+  assert.match(s.elements.status.textContent, /形=captions_v2:#58:1:2\(1:0,3:2\(6:2\)\) \| captions:#7:1:2,2:0!/);
+  assert.ok(!s.elements.status.textContent.includes("hello") && !s.elements.status.textContent.includes("PRIVATE"));
+  assert.ok(!s.elements.status.textContent.includes("1:0,".repeat(80)), "over-long structure is refused");
+});

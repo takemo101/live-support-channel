@@ -206,7 +206,7 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 | HTTP body／request・header timeout | 262144 bytes／各10000 ms |
 | keep-alive／同時接続／session保持 | 1000 ms／16／1プロセス最大32 |
 
-Meetのデコードはprotobufの意味に従い（未知のfieldは読み飛ばし、重複fieldは最後の値、0の値はwireに現れない＝版の欠落は0）、字幕として使えないフレーム（発話なし・話者IDなし・IDが範囲外・形式不正・非バイナリ）は捨てて理由別に数え、**使えるフレームが1つもないまま50件を超えたときだけ** `CAPTION_FORMAT_UNKNOWN` で停止する（理由の件数はパネルに出る。本文は含まない）。256KB超のフレームと上限超過は `CAPTION_LIMIT` で停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
+Meetのデコードはprotobufの意味に従い（未知のfieldは読み飛ばし、重複fieldは最後の値、0の値はwireに現れない＝版の欠落は0）、字幕として使えないフレーム（発話なし・話者IDなし・IDが範囲外・形式不正・非バイナリ）は捨てて理由別に数え、**チャネルごとに、使えるフレームが1つもないまま50件を超えたらそのチャネルだけ放棄し**（まだ自前の購読を作っていなければ1回だけ作り）、**使えるチャネルが1つも残らないときだけ** `CAPTION_FORMAT_UNKNOWN` で停止する（理由の件数と、最初の使えないフレームの構造＝field番号とwire型だけがパネルに出る。本文は含まない）。256KB超のフレームと上限超過は `CAPTION_LIMIT` で停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
 保存先は ~/.live-support/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 

@@ -41,7 +41,9 @@ export function statistics(d) {
     .map(([key, label]) => `${label}=${d[key]}`);
   // Which Meet caption profile (a fixed vocabulary) the capture settled on.
   const profile = ["captions", "captions_v2"].includes(d?.profile) ? [`方式=${d.profile}`] : [];
-  return [...counts, ...profile].join("／");
+  // Structure of the first unusable frames (field numbers and wire types only, e.g. captions_v2:#58:1:2(1:0,3:2(6:2))): never content.
+  const shapes = Array.isArray(d?.shapes) ? d.shapes.filter(v => typeof v === "string" && /^[a-z0-9_]{1,16}:#\d{1,6}:[0-9:,()!]{0,200}$/.test(v)).slice(0, 3) : [];
+  return [...counts, ...profile, ...(shapes.length ? [`形=${shapes.join(" | ")}`] : [])].join("／");
 }
 export function describe(result) {
   const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";
