@@ -100,7 +100,7 @@ Haikuを選ぶ場合は `ANTHROPIC_MODEL=haiku live-support claude` と起動で
 
 ### Claude Code 以外で使う（omp・pi・agy）
 
-字幕を受け取る部分だけが違います。`live-support agents` で、手元のパスを入れたコマンドを確認できます。omp と pi は拡張（push）、agy はMCPのツール `get_captions`（pull）です。実 omp・pi では、合成の字幕で受信から次のターンの開始までを確認しました。agy は字幕の取得までは未確認です。詳細・注意は [docs/other-agents.md](docs/other-agents.md) を参照してください。
+字幕を受け取る部分だけが違います。`live-support agents` で一覧、`live-support agents omp`（`pi`・`agy`・`claude`）で、手元のパスを入れたコマンドと手順を確認できます。omp と pi は拡張（push）、agy はMCPのツール `get_captions`（pull）です。実 omp・pi では、合成の字幕で受信から次のターンの開始までを確認しました。agy は字幕の取得までは未確認です。詳細・注意は [docs/other-agents.md](docs/other-agents.md) を参照してください。
 
 ### プロジェクトを切り替える
 

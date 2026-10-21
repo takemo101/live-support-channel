@@ -37,14 +37,20 @@ test("help does not create a token or launch Claude; unknown commands fail", asy
   await assert.rejects(access(f.runtime));
   assert.equal(f.run("unknown").status, 1);
 });
-test("agents prints runnable commands for omp, pi and agy that point at files that exist, and writes nothing", async t => {
+test("agents lists the four agents, and each one's page prints runnable commands that point at files that exist, writing nothing", async t => {
   const f = await fixture(t);
-  const p = f.run("agents");
-  assert.equal(p.status, 0, p.stderr);
+  const overview = f.run("agents");
+  assert.equal(overview.status, 0, overview.stderr);
+  for (const name of ["claude", "omp", "pi", "agy"]) assert.match(overview.stdout, new RegExp("\\b" + name + "\\b"));
+  assert.match(overview.stdout, /live-support agents <name>/);
+  const pages = Object.fromEntries(["claude", "omp", "pi", "agy"].map(name => { const p = f.run("agents", name); assert.equal(p.status, 0, name + ": " + p.stderr); return [name, p.stdout]; }));
   await assert.rejects(access(f.runtime));
-  for (const path of p.stdout.match(/\/[^\s"]+\.(?:js|md)\b/g)) await access(path);
-  assert.match(p.stdout, /omp -e \S+integrations\/pi\/live-support\.js --append-system-prompt \S+SKILL\.md/);
-  assert.match(p.stdout, /\bpi -e /); assert.match(p.stdout, /mcp\(live-support\/get_captions\)/); assert.match(p.stdout, /LIVE_SUPPORT_TOOLS/);
+  for (const text of Object.values(pages)) for (const path of text.match(/\/[^\s"]+\.(?:js|md)\b/g) ?? []) await access(path);
+  assert.match(pages.omp, /omp -e \S+integrations\/pi\/live-support\.js --append-system-prompt \S+SKILL\.md/);
+  assert.match(pages.pi, /\bpi -e \S+integrations\/pi\/live-support\.js/); assert.match(pages.agy, /mcp\(live-support\/get_captions\)/); assert.match(pages.agy, /LIVE_SUPPORT_TOOLS/);
+  assert.match(pages.claude, /live-support claude/);
+  const unknown = f.run("agents", "nope"); assert.equal(unknown.status, 1); assert.match(unknown.stderr, /claude \/ omp \/ pi \/ agy/);
+  assert.equal(f.run("setup", "extra").status, 1, "only agents takes an argument");
   const pack = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.ok(pack.files.includes("integrations/"), "the extension ships with the package");
 });
