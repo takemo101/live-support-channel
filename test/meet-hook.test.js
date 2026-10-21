@@ -229,18 +229,12 @@ test("an oversize frame stops the capture and never reaches the async queue", as
   const f = fixture(t); f.command("start"); f.channel.message(new Uint8Array(262145)); await f.drain();
   const read = f.command("read"); assert.equal(read.code, "CAPTION_LIMIT"); assert.equal(read.blocks, undefined); assert.equal(read.diagnostics.queued, 0);
 });
-test("a channel that never delivers anything usable is given up on by itself; our own subscription is tried once; only then does the capture stop", async t => {
-  const junk = Uint8Array.of(10, 255);
-  const f = fixture(t); f.command("start");
-  f.channel.message(packet(1, "baseline")); await f.drain();
-  for (let i = 0; i < 80; i++) { f.channel.message(junk); await f.drain(); }
-  assert.equal(f.command("read").status, "live", "junk next to real captions never stops anything");
-  const g = fixture(t); g.command("start"); const before = g.pc.channels.length;
-  for (let i = 0; i < 50; i++) { g.channel.message(junk); await g.drain(); }
-  assert.equal(g.command("read").status, "live", "the junk channel alone is abandoned, not the capture");
-  const own = g.pc.channels.slice(before); assert.deepEqual(own.map(c => c.label).sort(), ["captions", "captions_v2"], "our own subscription is created once, like the app's own client");
-  for (const channel of own) for (let i = 0; i < 50; i++) { channel.message(junk); await g.drain(); }
-  const ended = g.command("read"); assert.equal(ended.code, "CAPTION_FORMAT_UNKNOWN"); assert.equal(g.pc.channels.length, before + 2, "never subscribes twice");
+test("unusable frames never stop the capture, however many arrive before the first caption", async t => {
+  const junk = Uint8Array.of(10, 255), f = fixture(t); f.command("start");
+  for (let i = 0; i < 300; i++) { f.channel.message(junk); await f.drain(); }
+  assert.equal(f.command("read").status, "live"); assert.equal(f.command("read").diagnostics.dropped, 300);
+  f.channel.message(packet(1, "baseline")); await f.drain(); f.channel.message(packet(2, "the first real caption")); await f.drain();
+  assert.deepEqual(plain(f.command("read").blocks.map(b => b.transcript)), ["the first real caption"], "captions that follow the junk are still taken");
 });
 test("a good channel is used even while another one only delivers junk", async t => {
   const f = fixture(t, { native: false }); f.command("start");

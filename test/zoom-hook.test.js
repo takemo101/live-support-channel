@@ -81,15 +81,13 @@ test("zoom text artefacts are removed and empty text is ignored", () => {
   assert.deepEqual(f.blocks().map(b => b.transcript), ["hello world"]);
   assert.equal(f.command("read").diagnostics.dropped, 1, "an oversized message is dropped, not forwarded");
 });
-test("unusable items are counted and only a stream of nothing usable stops the capture", () => {
+test("unusable items are counted and never stop the capture, however many arrive before the first caption", () => {
   const f = fixture(); f.command("start");
-  f.store.set(byId(message("a", 1, "A", "fine")));
-  const junk = {}; for (let i = 0; i < 60; i++) junk["j" + i] = { msgId: "j" + i, text: "no user" };
-  f.store.set({ ...f.store.state.newLiveTranscription.newLTMessage, ...junk });
-  assert.equal(f.command("read").status, "live", "junk next to real captions is tolerated");
-  assert.equal(f.command("read").diagnostics.dropped, 60);
-  const g = fixture(); g.command("start"); g.store.set(junk);
-  const ended = g.command("read"); assert.equal(ended.status, "ended"); assert.equal(ended.code, "CAPTION_FORMAT_UNKNOWN");
+  const junk = {}; for (let i = 0; i < 300; i++) junk["j" + i] = { msgId: "j" + i, text: "no user" };
+  f.store.set(junk);
+  assert.equal(f.command("read").status, "live"); assert.equal(f.command("read").diagnostics.dropped, 300);
+  f.store.set({ ...f.store.state.newLiveTranscription.newLTMessage, a: message("a", 1, "A", "the first real caption") });
+  assert.deepEqual(f.blocks().map(b => b.transcript), ["the first real caption"]);
 });
 test("a reader error never reaches the page's store subscribers path and stops the capture", () => {
   const f = fixture(); f.command("start");

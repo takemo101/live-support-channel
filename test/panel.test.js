@@ -522,3 +522,12 @@ test("frame structures are shown only when they are pure structure (field number
   assert.ok(!s.elements.status.textContent.includes("hello") && !s.elements.status.textContent.includes("PRIVATE"));
   assert.ok(!s.elements.status.textContent.includes("1:0,".repeat(80)), "over-long structure is refused");
 });
+test("when only unusable data has arrived the status says so while the capture keeps running", async t => {
+  const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
+  s.fixture.diagnostics = { dropped: 120, accepted: 0, baselineExcluded: 0, frame: 120 };
+  s.elements.refresh.click(); await turn(); assert.match(s.elements.status.textContent, /字幕として使えないデータだけが届いています/);
+  s.fixture.diagnostics = { dropped: 120, accepted: 1, baselineExcluded: 0 }; s.elements.refresh.click(); await turn();
+  assert.doesNotMatch(s.elements.status.textContent, /字幕として使えないデータだけ/);
+  s.fixture.diagnostics = { dropped: 49, accepted: 0, baselineExcluded: 0 }; s.elements.refresh.click(); await turn();
+  assert.doesNotMatch(s.elements.status.textContent, /字幕として使えないデータだけ/);
+});
