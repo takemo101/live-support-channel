@@ -40,7 +40,8 @@ function fixture(t, { native = true, label = "captions_v2", host = "meet.google.
     location: { protocol: "https:", hostname: host, pathname: "/abc-defg-hij" },
     document: { querySelectorAll(selector) { assert.equal(selector, "button[aria-label]"); return [button]; }, get body() { throw Error("no caption DOM access"); } },
     RTCPeerConnection: Peer, RTCDataChannel: Channel, TextDecoder, TextEncoder, Uint8Array, ArrayBuffer, DataView, Blob, DecompressionStream: inflate,
-    performance: { now: () => now }, Date,
+    performance: { now: () => now }, Date, atob: globalThis.atob.bind(globalThis),
+    fetch(...args) { return page.fetchImpl(...args); }, fetchImpl: async () => ({ ok: true }),
     setTimeout(fn) { const id = ++clockId; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
     addEventListener(type, fn) { pageEvents.set(type, fn); },
   };
@@ -514,4 +515,40 @@ test("the utterance nested one level deeper (the shape seen on a real Meet) is d
   const read = f.command("read"); assert.equal(read.diagnostics.dropped, 0); assert.deepEqual(plain(read.blocks.map(b => b.transcript)), ["the nested caption"]);
   f.channel.message(blob(2, string(1, "x".repeat(150)))); await f.drain();   // another kind of packet (field 2 only): not a caption, just counted
   assert.equal(f.command("read").diagnostics.utterance, 1);
+});
+
+const SYNC = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections";
+const DEVICE = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice";
+const base64 = data => Buffer.from(data).toString("base64");
+const collection = devices => blob(2, blob(2, bytes(...devices.map(([id, name]) => blob(2, bytes(string(1, id), string(2, name)))))));
+const answer = (url, body, extra = {}) => { const response = { url, ok: true, text: async () => assert.fail("the page's own response must not be consumed"), clone: () => ({ text: async () => body }), ...extra }; return response; };
+const settle = () => new Promise(r => setTimeout(r, 10));
+async function speak(f, device, text, id) { f.channel.message(packet(id, "baseline", 1, device)); await f.drain(); f.channel.message(packet(id + 1, text, 1, device)); await f.drain(); }
+
+test("the full device list in Meet's SyncMeetingSpaceCollections response names everyone already present, including yourself", async t => {
+  const f = fixture(t); const response = answer(SYNC, base64(collection([["spaces/s/devices/alice", "Alice"], ["spaces/s/devices/me", "Taro Yamada"]])));
+  f.page.fetchImpl = async (...args) => { assert.equal(args[0], SYNC); return response; };
+  assert.equal(await f.page.fetch(SYNC, { method: "POST" }), response, "the page gets its own response object back, untouched"); await settle();
+  f.command("start"); await speak(f, "spaces/s/devices/alice", "hello", 1);
+  assert.equal(plain(f.command("read").blocks.at(-1).speakerName), "Alice");
+  f.channel.message(packet(10, "baseline", 1, "spaces/s/devices/me")); await f.drain(); f.channel.message(packet(11, "my words", 1, "spaces/s/devices/me")); await f.drain();
+  assert.equal(plain(f.command("read").blocks.at(-1).speakerName), "Taro Yamada");
+});
+test("yourself is named あなた（自分） when the roster has no name for the own device (id seen in the sync request or CreateMeetingDevice)", async t => {
+  for (const via of ["request", "device"]) {
+    const f = fixture(t);
+    if (via === "request") { f.page.fetchImpl = async () => answer(SYNC, base64(collection([]))); await f.page.fetch(SYNC, { method: "POST", body: "\n\x1aspaces/room/devices/me-1\x12" }); }
+    else { f.page.fetchImpl = async () => answer(DEVICE, base64(new TextEncoder().encode("\n\x20spaces/room/devices/me-1\x12"))); await f.page.fetch(DEVICE, { method: "POST" }); }
+    await settle(); f.command("start"); await speak(f, "spaces/room/devices/me-1", "mine", 1); await speak(f, "spaces/room/devices/bob", "theirs", 3);
+    const names = plain(f.command("read").blocks.map(b => b.speakerName));
+    assert.deepEqual(names.sort(), ["あなた（自分）", "話者 2（名前未確認）"].sort(), via);
+  }
+});
+test("fetch observation never touches other URLs, failed responses or errors", async t => {
+  const f = fixture(t); const seen = [];
+  f.page.fetchImpl = async (...args) => { seen.push(args[0]); if (args[0] === "boom") throw Error("network"); return answer(String(args[0]?.url ?? args[0]), "!!not base64!!", { ok: args[0] !== "fail" }); };
+  await f.page.fetch("https://example.com/x"); await f.page.fetch(SYNC); await f.page.fetch({ url: DEVICE }); await f.page.fetch("fail");
+  await assert.rejects(f.page.fetch("boom"), /network/); await settle();
+  assert.deepEqual(seen, ["https://example.com/x", SYNC, { url: DEVICE }, "fail", "boom"]);
+  assert.equal(f.command("discover").diagnostics.names, 0);
 });
