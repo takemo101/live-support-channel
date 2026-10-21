@@ -8,34 +8,10 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { runtimeDirectory, screenshotDirectory } from "../server/runtime.js";
 import { prepareToken, renewToken } from "../server/token.js";
+import { agents, AGENT_NAMES, help, launchBanner, setupDone, styler } from "./text.js";
 
-const help = `Live Support — meeting captions (Meet, Teams, Zoom) to one coding-agent session at a time
-  live-support setup    Install Chrome extension assets in your user directory
-  live-support claude   Launch a meeting-enabled Claude Code in the current project
-  live-support token    Print the pairing token locally (never share it)
-  live-support agents   Show how to use Live Support with omp, pi and agy (prints commands only)
-  live-support --help   Show this help
-`;
+const style = stream => styler({ tty: stream.isTTY === true, noColor: "NO_COLOR" in process.env });
 
-// Commands only: nothing is written to the other agents' configuration.
-function agents(root) {
-  const extension = join(root, "integrations/pi/live-support.js"), skill = join(root, "skills/meeting/SKILL.md"), server = join(root, "server/main.js");
-  return [
-    "omp (push: captions arrive as follow-up messages that start a turn):",
-    `  omp -e ${extension} --append-system-prompt ${skill}`,
-    "pi (same extension API as omp):",
-    `  pi -e ${extension} --append-system-prompt ${skill}`,
-    "  Then pair the Chrome panel with: live-support token   (the token is renewed each time the agent starts)",
-    "",
-    "agy (pull: the agent reads captions with the get_captions tool; there is no push into an agy session):",
-    "  1. In your project, .agents/mcp_config.json:",
-    JSON.stringify({ mcpServers: { "live-support": { command: "node", args: [server], env: { LIVE_SUPPORT_TOOLS: "1" } } } }, null, 2).replace(/^/gm, "     "),
-    '  2. Allow the tool in ~/.gemini/antigravity-cli/settings.json: { "permissions": { "allow": ["mcp(live-support/get_captions)"] } }',
-    "  3. Ask agy to call get_captions regularly (pass the returned cursor back as `after`). Pair the panel with: live-support token",
-    "",
-    "Claude Code: live-support claude",
-  ].join("\n");
-}
 async function existing(path) {
   try { return await lstat(path); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
@@ -66,14 +42,18 @@ async function requireFreePort() {
 }
 async function main() {
   const [command = "--help", ...extra] = process.argv.slice(2);
-  if (extra.length || !["setup", "claude", "token", "agents", "--help", "-h"].includes(command)) throw new Error("Unknown command. Run live-support --help.");
-  if (command === "--help" || command === "-h") { console.log(help); return; }
-  if (command === "agents") { console.log(agents(fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, ""))); return; }
+  if (!["setup", "claude", "token", "agents", "--help", "-h"].includes(command) || extra.length > (command === "agents" ? 1 : 0)) throw new Error("Unknown command. Run live-support --help.");
+  if (command === "--help" || command === "-h") { process.stdout.write(help(style(process.stdout))); return; }
+  if (command === "agents") { process.stdout.write(agents(fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, ""), extra[0] ?? null, style(process.stdout)) + "\n"); return; }
   const directory = runtimeDirectory();
-  if (command === "token") { console.log(await prepareToken(directory)); return; }
+  if (command === "token") {
+    console.log(await prepareToken(directory));
+    if (process.stderr.isTTY) console.error(style(process.stderr).dim("↑ ペアリングトークンです。他人に見せず、DevTools「Live Support」パネルに貼ってください。"));
+    return;
+  }
   if (command === "setup") {
     const extension = await setup(directory);
-    console.log("Chrome extension directory:\n" + extension + "\nLoad it once via chrome://extensions.\nRun live-support claude from your project, then live-support token for pairing.");
+    process.stdout.write(setupDone(extension, style(process.stdout)));
     return;
   }
   const lockPath = join(directory, "launcher.lock");
@@ -143,8 +123,7 @@ async function main() {
       },
     };
     checkCancellation();
-    console.error("Live Support project: " + project);
-    console.error("Meeting support: project read-only" + (web ? "; web search on (LIVE_SUPPORT_WEB=0 to disable)" : "") + "; pair with a fresh token from live-support token.");
+    process.stderr.write(launchBanner({ project, web }, style(process.stderr)));
     child = spawn("claude", [
       "--mcp-config", JSON.stringify(config), "--strict-mcp-config",
       "--tools", web ? "Read,Glob,Grep,Skill,Agent,WebSearch" : "Read,Glob,Grep,Skill", "--restricted", "--permission-mode", "manual",
