@@ -1,10 +1,10 @@
-// MAIN/document_start. No transcript processing while idle; no token or HTTP access here.
+// MAIN/document_start. No transcript processing while idle; no token, and no HTTP request of its own (Meet's own fetch responses are only read, from a clone).
 (() => {
   const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
   try { delete page.__liveCaptionsHookCore; } catch {}
   if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || page.location.hostname !== "meet.google.com" || page[key]) return;
   const NativePeer = page.RTCPeerConnection, create = NativePeer?.prototype?.createDataChannel;
-  const { Uint8Array: Bytes, ArrayBuffer: Buffer, TextDecoder: Decoder, Blob: BinaryBlob, DecompressionStream: Inflate } = page;
+  const { Uint8Array: Bytes, ArrayBuffer: Buffer, TextDecoder: Decoder, Blob: BinaryBlob, DecompressionStream: Inflate } = page, nativeFetch = page.fetch, nativeAtob = page.atob;
   const now = page.performance.now.bind(page.performance), wallTime = page.Date.now.bind(page.Date);
   const LIMIT = 262144, ACK_LIMIT = 16384, peers = new Set(), tracked = new WeakMap();
   const NativeChannel = page.RTCDataChannel?.prototype, nativeSend = NativeChannel?.send, mediaSeen = new WeakMap(), mediaWritten = new WeakSet();
@@ -267,8 +267,38 @@
         bytes = new Bytes(size); let position = 0;
         for (const chunk of chunks) { bytes.set(chunk, position); position += chunk.length; }
       }
-      for (const device of walk(bytes, [2, 2, 2])) note(device);
-      for (const device of walk(bytes, [1, 2, 13, 1, 2])) note(device);
+      learnBytes(bytes);
+    } catch {}
+  }
+  function learnBytes(bytes) {
+    for (const device of walk(bytes, [2, 2, 2])) note(device);
+    for (const device of walk(bytes, [1, 2, 13, 1, 2])) note(device);
+  }
+  // Meet sends the full device list (everyone already in the meeting, and yourself) only in the response of SyncMeetingSpaceCollections;
+  // the "collections" channel carries just the changes after that. The own device id shows up in that request and in CreateMeetingDevice.
+  const SYNC_URL = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingSpaceService/SyncMeetingSpaceCollections";
+  const DEVICE_URL = "https://meet.google.com/$rpc/google.rtc.meetings.v1.MeetingDeviceService/CreateMeetingDevice";
+  const SELF_PATTERN = /spaces\/[A-Za-z0-9_-]{1,64}\/devices\/[A-Za-z0-9_-]{1,64}/;
+  let selfDevice = null;
+  const latin1 = bytes => { let out = ""; for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]); return out; };
+  function noteSelf(text, replace) { const match = typeof text === "string" ? SELF_PATTERN.exec(text) : null; if (match && (replace || !selfDevice)) selfDevice = match[0]; }
+  function bodyText(body) {
+    if (typeof body === "string") return body.length <= LIMIT ? body : null;
+    if (body instanceof Buffer && body.byteLength <= LIMIT) return latin1(new Bytes(body));
+    if (Buffer.isView(body) && body.byteLength <= LIMIT) return latin1(new Bytes(body.buffer, body.byteOffset, body.byteLength));
+    return null;
+  }
+  async function inspectResponse(url, response) {
+    try {
+      if (!response || response.ok === false || typeof response.clone !== "function") return;
+      const text = await response.clone().text();
+      if (typeof text !== "string" || text.length > LIMIT * 2) return;
+      const raw = nativeAtob(text.trim()), bytes = new Bytes(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      if (url === DEVICE_URL) { noteSelf(latin1(bytes), true); return; }
+      const before = roster.size;
+      try { learnBytes(bytes); } catch {}
+      if (roster.size === before && bytes.length > 5 && bytes[0] === 0) { try { learnBytes(bytes.subarray(5)); } catch {} }   // a gRPC-web frame header
     } catch {}
   }
   let rosterBusy = 0;
@@ -276,7 +306,10 @@
     if (event.isTrusted !== true || rosterBusy >= 8) return;
     rosterBusy++; learn(event.data).finally(() => { rosterBusy--; });
   }
-  const nameOf = speaker => roster.get(deviceKey(speaker.device)) || `話者 ${speaker.number}（名前未確認）`;
+  const nameOf = speaker => {
+    const device = deviceKey(speaker.device);
+    return roster.get(device) || (selfDevice && device === selfDevice ? "あなた（自分）" : `話者 ${speaker.number}（名前未確認）`);
+  };
   // Structure only (field numbers and wire types, never values): lets a mismatch with the real wire be diagnosed without any caption text.
   // A length-delimited field is opened only if it holds a control byte, which plain text never does.
   function shapeOf(bytes, depth = 5) {
@@ -496,5 +529,15 @@
       NativeChannel.send = function (...args) { try { observeMedia(this, args[0]); } catch {} return nativeSend.apply(this, args); };
     } catch {}
   } catch { prepareError = "RTC_PREPARE_FAILED"; }
-  page.addEventListener("pagehide", () => { roster.clear(); finish("MEETING_CHANGED"); });
+  if (typeof nativeFetch === "function" && typeof nativeAtob === "function") try {
+    page.fetch = function (...args) {
+      let url = "";
+      try { const input = args[0]; url = typeof input === "string" ? input : String(input?.url ?? ""); } catch {}
+      if (url === SYNC_URL) { try { noteSelf(bodyText(args[1]?.body), false); } catch {} }
+      const result = nativeFetch.apply(this, args);
+      if (url === SYNC_URL || url === DEVICE_URL) { try { result.then(response => { void inspectResponse(url, response); }, () => {}); } catch {} }
+      return result;
+    };
+  } catch {}
+  page.addEventListener("pagehide", () => { roster.clear(); selfDevice = null; finish("MEETING_CHANGED"); });
 })();

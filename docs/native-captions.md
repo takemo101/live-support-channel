@@ -86,3 +86,7 @@ lease失効だけは、パネルが新しい所有者でrecoverを呼んで同�
 ## 実Meetで観測した形（構造のみ）
 
 `captions_v2` の実フレームは、`Packet.1` の中にもう一段のラッパーがあり、`Packet{1:{1:{1:id,2:version,3:caption},6:{1:n}}}` の形だった（Tactiqの解析時点の定義は `Packet{1:utterance}`）。Tactiqのprotobufjs生成デコーダはfield番号だけで読みwire型を見ないため、この入れ子を偶然平らに読む。当方は、`3`（caption）が見つからないときに `1`（length-delimited）を最大2段まで開いて読む。`Packet{2:…}` だけのフレーム（150バイト前後）は字幕ではなく、「発話なし」として数える。Tactiq 3.1.7302（最新）でも `captions_v2` の定義は変わっていない（確認済み）。
+
+## 名簿の取得元（Tactiq 3.1.7302との比較・実機未確認）
+
+Tactiqは、名簿を **`SyncMeetingSpaceCollections` のfetch応答**（base64のprotobuf。`BMeetingCollection.2.2.2` ＝ 反復する `{1:deviceId, 2:deviceName}`）から読み、`collections` チャネルは参加後の変更の補完に使う。自分のdevice idは、`CreateMeetingDevice` の応答と `SyncMeetingSpaceCollections` の要求本文から `spaces/<id>/devices/<id>` を正規表現で拾う。当方は以前チャネルだけを読んでいたため、参加時点で既にいる人と自分の名前を取りこぼし、「話者 N（名前未確認）」になっていた。現在はfetchの応答を `clone()` から読み取り専用で取り込む（応答そのものは触らず、独自のHTTP要求も出さない）。名簿に自分の名前が無いときは「あなた（自分）」と表示する。
