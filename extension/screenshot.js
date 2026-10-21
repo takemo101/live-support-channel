@@ -18,11 +18,13 @@ export async function rasterize(dataUrl, { document = globalThis.document, creat
   } finally { bitmap.close?.(); }
 }
 
-// True when two signatures differ by no more than `tolerance` on average (0-255): the screen has not meaningfully changed.
-export function similar(a, b, tolerance = 4) {
+// True when the screen has not meaningfully changed: the signatures differ by no more than `tolerance` on average (0-255) AND no real share of the
+// cells changed clearly. The second test matters for a video playing in one part of the screen, which barely moves the average.
+export function similar(a, b, tolerance = 4, { cellDelta = 24, cellShare = 0.03 } = {}) {
   if (!a || !b || a.length !== b.length || !a.length) return false;
-  let total = 0; for (let i = 0; i < a.length; i++) total += Math.abs(a[i] - b[i]);
-  return total / a.length <= tolerance;
+  let total = 0, changed = 0;
+  for (let i = 0; i < a.length; i++) { const d = Math.abs(a[i] - b[i]); total += d; if (d > cellDelta) changed++; }
+  return total / a.length <= tolerance && changed / a.length < cellShare;
 }
 
 // Throws an Error whose `code` is one of a fixed vocabulary (see diagnostics.js), so the panel can say why no picture was taken.

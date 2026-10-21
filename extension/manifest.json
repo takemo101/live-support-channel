@@ -5,7 +5,8 @@
   "description": "Experimental consent-controlled caption reader for Meet, Teams and Zoom that feeds a local Claude Code. Prepare before joining; no Tactiq or audio recording.",
   "minimum_chrome_version": "125",
   "devtools_page": "devtools.html",
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab"],
+  "action": { "default_title": "Live Support：会議タブで押すと、この画面の撮影を許可します" },
   "background": { "service_worker": "background.js" },
   "host_permissions": [
     "http://127.0.0.1/*",

@@ -10,7 +10,8 @@ test("extension prepares MAIN-world hooks on the meeting sites only, with no bro
   // Host access is exactly the receiver on loopback plus the meeting sites the content scripts already cover (needed for the tab screenshot); no <all_urls>, tabs or debugger.
   const meetingHosts = manifest.content_scripts.flatMap(script => script.matches);
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*", ...meetingHosts]);
-  assert.deepEqual(manifest.permissions, ["storage"]);
+  assert.deepEqual(manifest.permissions, ["storage", "activeTab"], "activeTab only: <all_urls>, tabs and debugger stay out");
+  assert.ok(manifest.action?.default_title, "the toolbar icon is where the user grants the capture");
   assert.deepEqual(manifest.background, { service_worker: "background.js" });
   assert.deepEqual(manifest.content_scripts, [
     { matches: ["https://meet.google.com/*"], js: ["hook-core.js", "meet-wire.js", "meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },

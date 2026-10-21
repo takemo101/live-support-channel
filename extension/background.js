@@ -16,6 +16,15 @@ async function capture(tabId) {
   catch (error) { return { ok: false, reason: /permission|activeTab|all_urls/i.test(String(error?.message)) ? "permission" : "failed" }; }
 }
 
+// captureVisibleTab needs "activeTab" or "<all_urls>"; host permissions alone are refused. activeTab is granted for one tab when the user clicks the
+// toolbar icon on it, so the click is the permission: nothing broader is held. The badge confirms it (it resets when the tab navigates).
+chrome.action?.onClicked?.addListener(tab => {
+  try {
+    const known = (() => { try { const url = new URL(tab?.url ?? ""); return url.protocol === "https:" && HOSTS.has(url.hostname); } catch { return false; } })();
+    chrome.action.setBadgeText({ tabId: tab.id, text: known ? "撮影" : "対象外" });
+  } catch {}
+});
+
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("panel.html"))) return false;
   if (message?.type !== "live-support-screenshot" || !Number.isSafeInteger(message.tabId)) return false;

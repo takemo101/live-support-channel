@@ -81,7 +81,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       const shot = await within(screenshot(), SHOT_LIMIT);
       if (!shot?.bytes?.length) { shotWhy = "failed"; return null; }
       shotWhy = null;
-      if (similar(lastShot, shot.signature)) return null;
+      if (similar(lastShot, shot.signature)) { shotWhy = "same"; return null; }
       lastShot = shot.signature; return shot;
     } catch (error) {
       shotWhy = typeof error?.code === "string" ? error.code : "failed";

@@ -522,7 +522,7 @@ test("roster counters and the structure of an empty device list are shown, nothi
 });
 test("when no screenshot can be taken or uploaded the status says why, from a fixed vocabulary, and clears once one works", async t => {
   const coded = code => Object.assign(new Error(code), { code });
-  const cases = [["worker", /背景処理に届きません/], ["inactive", /前面にありません/], ["permission", /権限がありません/], ["decode", /画像の変換/], ["<script>PRIVATE", /撮影に失敗/]];
+  const cases = [["worker", /背景処理に届きません/], ["inactive", /選ばれていません/], ["permission", /拡張アイコン/], ["decode", /画像の変換/], ["<script>PRIVATE", /撮影に失敗/]];
   for (const [code, pattern] of cases) {
     const s = setup(t, undefined, undefined, shooter(coded(code))); await start(s); fresh(s, "a", "words"); await s.poll();
     assert.match(s.elements.status.textContent, /画像=0（/); assert.match(s.elements.status.textContent, pattern, code); assert.ok(!s.elements.status.textContent.includes("PRIVATE"));
@@ -530,8 +530,8 @@ test("when no screenshot can be taken or uploaded the status says why, from a fi
   const up = setup(t, url => url.includes("/screenshots") ? { ok: false, status: 400 } : { ok: true, status: 202 }, undefined, shooter(fakeShot(10))); await start(up); fresh(up, "a", "words"); await up.poll();
   assert.match(up.elements.status.textContent, /画像=0（画像の送信に失敗/);
   const recover = setup(t, undefined, undefined, shooter(coded("inactive"), fakeShot(10))); await start(recover);
-  fresh(recover, "a", "one"); await recover.poll(); assert.match(recover.elements.status.textContent, /前面にありません/);
-  fresh(recover, "b", "two"); await recover.poll(); assert.match(recover.elements.status.textContent, /画像=1/); assert.doesNotMatch(recover.elements.status.textContent, /前面にありません/);
+  fresh(recover, "a", "one"); await recover.poll(); assert.match(recover.elements.status.textContent, /選ばれていません/);
+  fresh(recover, "b", "two"); await recover.poll(); assert.match(recover.elements.status.textContent, /画像=1/); assert.doesNotMatch(recover.elements.status.textContent, /選ばれていません/);
 });
 test("a screenshot that never answers cannot hold the captions back, and later batches skip screenshots for a while", async t => {
   let asked = 0; const hang = () => { asked++; return new Promise(() => {}); };
@@ -557,4 +557,10 @@ test("default batching also sends when a new utterance starts during continuous 
   assert.equal(posts(s).length, 1, "a boundary within 3s of the last send waits");
   s.fixture.snapshot.blocks.at(-2).transcript += "!"; await s.tick(2800); await s.capture(); await s.tick(250);
   assert.equal(posts(s).length, 2, "after 3s the boundary is honoured");
+});
+test("an unchanged screen is reported as such in the status instead of staying silent, and a change clears it", async t => {
+  const s = setup(t, undefined, undefined, shooter(fakeShot(10), fakeShot(11), fakeShot(200))); await start(s);
+  fresh(s, "a", "one"); await s.poll(); assert.match(s.elements.status.textContent, /画像=1/); assert.doesNotMatch(s.elements.status.textContent, /前回と同じ/);
+  fresh(s, "b", "two"); await s.poll(); assert.match(s.elements.status.textContent, /画像=1（画面は前回と同じとみなしました/);
+  fresh(s, "c", "three"); await s.poll(); assert.match(s.elements.status.textContent, /画像=2/); assert.doesNotMatch(s.elements.status.textContent, /前回と同じ/);
 });

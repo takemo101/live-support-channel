@@ -8,6 +8,8 @@ import { chrome as chromeBinary, runInChrome } from "../test-support/chrome.js";
 test("similar tells an unchanged screen from a changed one and refuses to compare unlike signatures", () => {
   const a = new Uint8Array(576).fill(100), near = a.map(v => v + 3), far = a.map((v, i) => i < 288 ? v : v + 80);
   assert.equal(similar(a, a), true); assert.equal(similar(a, near), true); assert.equal(similar(a, far), false);
+  const corner = a.map((v, i) => i < 20 ? v + 60 : v);   // a video in one corner: 3.5% of the cells change clearly, yet the average moves by only ~2 (the old test called this unchanged)
+  assert.equal(similar(a, corner), false, "a localized clear change is a change"); assert.equal(similar(a, a.map((v, i) => i < 8 ? v + 60 : v)), true, "a few cells flickering is not");
   assert.equal(similar(null, a), false); assert.equal(similar(a, new Uint8Array(10)), false); assert.equal(similar(new Uint8Array(0), new Uint8Array(0)), false);
 });
 test("captureScreenshot only accepts a JPEG data URL from the worker and hands it on to be shrunk", async () => {
