@@ -13,7 +13,7 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
 - Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。話者名はMeetの名簿（SyncMeetingSpaceCollectionsの応答＝参加時の全員一覧をcloneから読み取り専用で取得し、以降の変更はcollectionsチャネルから。自分のdevice idはCreateMeetingDeviceの応答／Syncの要求から得て、名簿に名前が無ければ「あなた（自分）」）。旧記述：Meetの名簿メッセージ（collections）から。Teams：通話の字幕イベントのハンドラを開始後だけ包む傍受。Zoom：アプリのReduxストアを開始後だけ購読（読み取りのみ）。いずれも話者は表示名。
 - 同意後の開始・一時停止・再開・停止。字幕OFF・lease失効・チャネル終了・上限等で停止（字幕として使えないデータだけでは止めない）。
-- 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
+- 約0.5秒のsnapshot／heartbeat（送信判定は0.25秒ごと）。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が1.2秒静か、または最古の未送信の変化が10秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 

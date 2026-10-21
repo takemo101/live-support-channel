@@ -34,9 +34,9 @@ function setup(t, fetcher, storage, screenshot) {
   });
   t.after(() => panel.dispose());
   return { elements, block, fixture, calls, contexts, actions, navigation, clock,
-    capture: () => timers.get(1000)?.(), tick: async ms => { clock.t += ms; await timers.get(500)?.(); }, flush: async () => { clock.t += 5000; await timers.get(500)?.(); },
+    capture: () => timers.get(500)?.(), tick: async ms => { clock.t += ms; await timers.get(250)?.(); }, flush: async () => { clock.t += 5000; await timers.get(250)?.(); },
     // One read, then enough quiet time for the default batching to be due, then the send decision.
-    async poll() { await timers.get(1000)?.(); clock.t += 5000; await timers.get(500)?.(); },
+    async poll() { await timers.get(500)?.(); clock.t += 5000; await timers.get(250)?.(); },
   };
 }
 async function start(s) {
@@ -415,21 +415,21 @@ test("diagnostic counters are whitelisted integers, nothing else", async t => {
   assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("secret-tid"));
 });
 
-test("default batching holds while speech continues and sends once captions are quiet", async t => {
+test("default batching holds while speech continues and sends about a second after captions go quiet", async t => {
   const s = setup(t); await start(s);
-  fresh(s, "a", "first words"); await s.capture(); await s.tick(1000); assert.equal(posts(s).length, 0, "still within the quiet window");
-  s.fixture.snapshot.blocks[1].transcript += " and more"; await s.tick(1500); await s.capture(); await s.tick(2000); assert.equal(posts(s).length, 0, "a change restarts the quiet window");
-  await s.tick(1500);
+  fresh(s, "a", "first words"); await s.capture(); await s.tick(500); assert.equal(posts(s).length, 0, "still within the quiet window");
+  s.fixture.snapshot.blocks[1].transcript += " and more"; await s.capture(); await s.tick(700); assert.equal(posts(s).length, 0, "a change restarts the quiet window");
+  await s.tick(600);
   assert.equal(posts(s).length, 1); assert.deepEqual(JSON.parse(posts(s)[0].options.body).updates.map(b => b.transcript), ["first words and more"]);
   await s.tick(10000); assert.equal(posts(s).length, 1, "nothing pending, nothing sent");
 });
 test("default batching still sends during continuous speech after the maximum hold", async t => {
   const s = setup(t); await start(s);
   fresh(s, "a", "x"); await s.capture();
-  for (let i = 0; i < 44; i++) { s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(1000); await s.capture(); }
-  assert.equal(posts(s).length, 0, "44s of constant change is still held");
-  s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(1000); await s.capture(); await s.tick(0);
-  assert.equal(posts(s).length, 1, "the oldest unsent change is at most 45s old");
+  for (let i = 0; i < 19; i++) { s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(500); await s.capture(); }
+  assert.equal(posts(s).length, 0, "9.5s of constant change is still held");
+  s.fixture.snapshot.blocks[1].transcript += "."; await s.tick(500);
+  assert.equal(posts(s).length, 1, "the oldest unsent change is at most 10s old");
 });
 for (const [mode, ms] of [["5", 5000], ["30", 30000]]) test("fixed cadence " + mode + "s sends on schedule only", async t => {
   const s = setup(t); s.elements.batch.value = mode; await start(s);

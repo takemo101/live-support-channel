@@ -5,8 +5,9 @@ import { captureScreenshot, similar } from "./screenshot.js";
 
 // Batching: "pause" sends once the captions have been quiet for QUIET ms (an utterance run ended) or the oldest unsent change is MAX_HOLD old;
 // "5" and "30" send on a fixed cadence in seconds. A failed send is retried after RETRY ms.
-const QUIET = 3000, MAX_HOLD = 45000, RETRY = 5000, CADENCE = { 5: 5000, 30: 30000 };
-const DESCRIPTION = { pause: "発話の区切りごと（最大45秒）", 5: "約5秒ごと", 30: "約30秒ごと" };
+// READ/SEND are the poll and send-check periods; together with QUIET they are the delay the user feels after speaking (about QUIET + up to READ + SEND).
+const QUIET = 1200, MAX_HOLD = 10000, READ = 500, SEND = 250, RETRY = 5000, CADENCE = { 5: 5000, 30: 30000 };
+const DESCRIPTION = { pause: "発話の区切りごと（最大10秒）", 5: "約5秒ごと", 30: "約30秒ごと" };
 // `screenshot()` resolves to { bytes (JPEG), signature } of the meeting tab, or null when none could be taken (inactive tab, rate limit, no permission).
 export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, screenshot, now = () => performance.now() }) {
   const el = id => document.getElementById(id);
@@ -209,7 +210,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       lastChange = lastSent = now(); pendingSince = null; retryAt = 0;
       if (resume) await stream.update(baseline); else stream.start(baseline);
       if (!active || run !== generation) return;
-      paused = false; readTimer = setInterval(capture, 1000); sendTimer = setInterval(flush, 500);
+      paused = false; readTimer = setInterval(capture, READ); sendTimer = setInterval(flush, SEND);
       status("取得中です。開始時点までの発言は送らず、これ以降の発言から転送します。");
     } catch (error) {
       if (run === generation) {
