@@ -24,8 +24,9 @@ const messages = {
   CAPTION_LIMIT: "字幕が取得上限を超えたため停止しました。",
   CAPTURE_BUFFER_LIMIT: "読取りバッファの上限に達したため停止しました。再確認して新しい区間から開始してください。",
   PLATFORM_NOT_IMPLEMENTED: "ZoomはWebクライアント（app.zoom.us）だけに対応しています。ブラウザ版で参加してください。",
-  TEAMS_CAPTIONS_NOT_FOUND: "Teamsのライブキャプションが表示されていません。会議に参加し、Teams側でライブキャプションをONにして字幕を表示してから「再確認」してください。",
-  ZOOM_FRAME_NOT_FOUND: "Zoomの会議画面がまだ開かれていません。会議に参加し、字幕を表示してから「再確認」してください。",
+  TEAMS_CALL_NOT_FOUND: "Teamsの通話情報が見つかりません。会議に参加し、ライブキャプションをONにしてから「再確認」してください。それでも見つからない場合は、Teamsの内部構造が変わった可能性があります。",
+  TEAMS_CALL_ENDED: "Teamsの通話が終了したため停止しました。",
+  ZOOM_STORE_NOT_FOUND: "Zoomの字幕の内部状態が見つかりません。会議に参加し、字幕（ライブトランスクリプション）をONにしてから「再確認」してください。それでも見つからない場合は、Zoomの内部構造が変わった可能性があります。",
   UNSUPPORTED_HOST: "対応する会議タブで開いてください。現在の取得対象はGoogle Meet、Teams、Zoom（Webクライアント）です。",
   UNSUPPORTED_FRAME: "会議のメインフレーム以外は取得しません。",
   NOT_MEETING_PAGE: "会議ページを開いてください。Meetは meet.google.com/abc-defg-hij または /meet/abc-defg-hij、ZoomはWebクライアント（app.zoom.us/wc/…）の会議画面が対象です。",
@@ -37,12 +38,10 @@ const messages = {
   READ_FAILED: "字幕状態を確認できません。会議タブを再確認してください。",
 };
 export function statistics(d) {
-  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["rows", "字幕行"], ["unmatched", "構造不明"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"]]
+  const counts = [["peers", "接続"], ["captionChannels", "字幕ch"], ["names", "名簿"], ["received", "受信"], ["baselineExcluded", "初回ID除外"], ["accepted", "採用"], ["dropped", "不正"]]
     .filter(([key]) => Number.isSafeInteger(d?.[key]) && d[key] >= 0 && d[key] <= 1_000_000_000)
     .map(([key, label]) => `${label}=${d[key]}`);
-  // UI hook names only (never caption text); they show which part of a changed Teams layout is missing.
-  const tids = Array.isArray(d?.tids) ? d.tids.filter(l => typeof l === "string" && /^[A-Za-z0-9_.-]{1,48}$/.test(l)).slice(0, 12) : [];
-  return [...counts, ...(tids.length ? [`data-tid=${tids.join(",")}`] : [])].join("／");
+  return counts.join("／");
 }
 export function describe(result) {
   const code = Object.hasOwn(messages, result?.code) ? result.code : "READ_FAILED";

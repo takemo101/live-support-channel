@@ -401,18 +401,18 @@ test("a Zoom capture is discovered, explained, and sent as Zoom", async t => {
   assert.equal(JSON.parse(posts(s)[0].options.body).platform, "Zoom");
 });
 test("Zoom frame and unsupported-host refusals are explained", async t => {
-  for (const code of ["ZOOM_FRAME_NOT_FOUND", "TEAMS_CAPTIONS_NOT_FOUND", "PLATFORM_NOT_IMPLEMENTED"]) {
+  for (const code of ["ZOOM_STORE_NOT_FOUND", "TEAMS_CALL_NOT_FOUND", "TEAMS_CALL_ENDED", "PLATFORM_NOT_IMPLEMENTED"]) {
     const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = code;
     s.elements.refresh.click(); await turn();
     assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
   }
 });
-test("diagnostic counters and sanitized UI hook names are shown, nothing else", async t => {
+test("diagnostic counters are whitelisted integers, nothing else", async t => {
   const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = "CAPTION_FORMAT_UNKNOWN";
-  s.fixture.diagnostics = { peers: 0, rows: 0, unmatched: 3, tids: ["closed-caption-renderer-wrapper", "bad tid<x>", "closed-caption-text", 7], secret: "PRIVATE" };
+  s.fixture.diagnostics = { peers: 0, names: 3, dropped: 7, received: "PRIVATE_RAW", tids: ["secret-tid"], secret: "PRIVATE" };
   s.elements.refresh.click(); await turn();
-  assert.match(s.elements.status.textContent, /構造不明=3/); assert.match(s.elements.status.textContent, /data-tid=closed-caption-renderer-wrapper,closed-caption-text/);
-  assert.ok(!s.elements.status.textContent.includes("bad tid") && !s.elements.status.textContent.includes("PRIVATE"));
+  assert.match(s.elements.status.textContent, /名簿=3/); assert.match(s.elements.status.textContent, /不正=7/);
+  assert.ok(!s.elements.status.textContent.includes("PRIVATE") && !s.elements.status.textContent.includes("secret-tid"));
 });
 
 test("default batching holds while speech continues and sends once captions are quiet", async t => {
