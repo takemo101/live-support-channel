@@ -106,7 +106,11 @@
         device = part(fields, 1, 2); id = part(fields, 2, 0); revision = part(fields, 3, 0) ?? 0n; body = part(fields, 6, 2);
       } else {
         const message = part(outer, 1, 2); if (!message) return "utterance";
-        const fields = scan(message), caption = part(fields, 3, 2); if (!caption) return "utterance";
+        // The real wire (seen on Meet, structure only) nests the utterance one level deeper: {1: {1: id, 2: version, 3: caption}, 6: {...}}. The app's own
+        // decoder reads a field by number whatever its wire type, so it flattens that nesting by accident; we open it explicitly (at most twice).
+        let fields = scan(message);
+        for (let depth = 0; depth < 2 && !part(fields, 3, 2); depth++) { const wrapped = part(fields, 1, 2); if (!wrapped) break; fields = scan(wrapped); }
+        const caption = part(fields, 3, 2); if (!caption) return "utterance";
         id = part(fields, 1, 0); revision = part(fields, 2, 0) ?? 0n;
         const inner = scan(caption); device = part(inner, 6, 2); body = part(inner, 3, 2);
       }
@@ -275,7 +279,7 @@
   const nameOf = speaker => roster.get(deviceKey(speaker.device)) || `話者 ${speaker.number}（名前未確認）`;
   // Structure only (field numbers and wire types, never values): lets a mismatch with the real wire be diagnosed without any caption text.
   // A length-delimited field is opened only if it holds a control byte, which plain text never does.
-  function shapeOf(bytes, depth = 3) {
+  function shapeOf(bytes, depth = 5) {
     const parts = [], cursor = { pos: 0 };
     try {
       while (cursor.pos < bytes.length && parts.length < 12) {

@@ -506,3 +506,12 @@ test("every unusable frame is classified so a real-world mismatch can be diagnos
   assert.deepEqual([d.dropped, d.frame, d.utterance, d.device, d.id, d.binary], [5, 1, 1, 1, 1, 1]);
   assert.ok(!JSON.stringify(d).includes("no device"), "never any text");
 });
+
+test("the utterance nested one level deeper (the shape seen on a real Meet) is decoded like the app's own flattening decoder does", async t => {
+  const nested = (id, text, version = 0) => blob(1, bytes(blob(1, bytes(scalar(1, id), ...(version ? [scalar(2, version)] : []), blob(3, bytes(string(3, text), string(4, "ja"), string(6, "dev-a"))))), blob(6, scalar(1, 0))));
+  const f = fixture(t); f.command("start");
+  f.channel.message(nested(1, "baseline")); await f.drain(); f.channel.message(nested(2, "the nested caption")); await f.drain();
+  const read = f.command("read"); assert.equal(read.diagnostics.dropped, 0); assert.deepEqual(plain(read.blocks.map(b => b.transcript)), ["the nested caption"]);
+  f.channel.message(blob(2, string(1, "x".repeat(150)))); await f.drain();   // another kind of packet (field 2 only): not a caption, just counted
+  assert.equal(f.command("read").diagnostics.utterance, 1);
+});
