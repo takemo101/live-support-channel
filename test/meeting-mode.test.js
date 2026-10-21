@@ -22,9 +22,9 @@ async function launch(t, fromHome = false, extraEnv = {}) {
 test("launch enables only Skill, project read tools and web search with session-local plugin", async t => {
   const { result, args } = await launch(t);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill,WebSearch,WebFetch");
+  assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill,WebSearch");
   const permissions = JSON.parse(args[args.indexOf("--settings") + 1]).permissions;
-  assert.deepEqual(permissions.allow, ["WebSearch"], "search runs on its own; WebFetch stays behind the manual approval");
+  assert.deepEqual(permissions.allow, ["WebSearch"], "search runs on its own; there is no WebFetch");
   assert.ok(!args.includes("--disable-slash-commands"));
   assert.ok(args.includes("--restricted"));
   assert.equal(args[args.indexOf("--permission-mode") + 1], "manual");
