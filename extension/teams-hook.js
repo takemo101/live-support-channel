@@ -1,92 +1,103 @@
-// MAIN/document_start on Teams. Reads only the live-caption list the user has made visible, and only after an explicit start.
-// No transcript processing while idle; never mutates the page, starts captions, sends, or touches tokens, HTTP, sockets, RTC or app state.
+// MAIN/document_start on Teams. Intercepts the caption results Teams' own calling code receives; reads nothing from the page DOM and never starts captions or mutates the page.
+// Only after an explicit start: the call's remote-event handler is wrapped (the original is always called, and restored at the end).
+// No transcript processing and no patching while idle; never sends, or touches tokens, HTTP or sockets.
 (() => {
   const page = window, key = "__liveCaptionsRtc_v1", core = page.__liveCaptionsHookCore;
   try { delete page.__liveCaptionsHookCore; } catch {}
   const hosts = new Set(["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]);
   if (typeof core !== "function" || page !== page.top || page.location.protocol !== "https:" || !hosts.has(page.location.hostname) || page[key]) return;
-  const wallTime = page.Date.now.bind(page.Date);
-  const LIST = '[data-tid="closed-caption-v2-virtual-list-content"]';
-  const fail = code => { throw Object.assign(new Error(code), { code }); };
   const currentMeeting = () => page.location.protocol === "https:" && hosts.has(page.location.hostname) ? `${page.location.hostname}/call` : null;
-  const findList = () => { try { return page.document.querySelector(LIST); } catch { return null; } };
-  const life = core(page, { meeting: currentMeeting, cleanup(s) { s.records.length = 0; s.speakers.clear(); } });
-  const { finish, valid } = life;
-  const PREFIX = 16;
-  // Teams revises a caption in place (words are corrected, punctuation and case added); an element reused for a different sentence shares no real prefix.
-  function related(a, b) {
-    if (a === b) return true;
-    const x = life.letters(a), y = life.letters(b), limit = Math.min(PREFIX, x.length, y.length); let i = 0;
-    while (i < limit && x[i] === y[i]) i++;
-    return limit > 0 && i === limit;
+  // The app publishes its calling context as a WeakRef; the active call carries the data-channel subscriptions and the participant list.
+  const activeCall = () => { try { return page.msteamscalling?.deref?.()?.callingService?.getActiveCall?.() ?? null; } catch { return null; } };
+  const handlerOf = call => {
+    try { return call?.dataChannel?.subscriptions?.find(entry => entry?.eventHandler?.on?.name === "remoteUserEventsReceived")?.eventHandler?.on ?? null; } catch { return null; }
+  };
+  const life = core(page, { meeting: currentMeeting, check: s => activeCall() === null ? "TEAMS_CALL_ENDED" : null,
+    cleanup(s) { s.records.clear(); s.speakers.clear(); s.bounds.clear(); s.call = null; } });
+  const { finish } = life;
+  // Teams' own text can carry NULs and replacement characters.
+  const sanitize = text => {
+    if (typeof text !== "string" || text.length > 32768) return null;
+    const value = text.replace(/\0/g, "").replace(/\ufffd/g, "");
+    return value.trim() ? value : "";
+  };
+  function stampOf(value) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return BigInt(Math.trunc(value));
+    if (typeof value === "string" && /^\d{1,20}$/.test(value)) return BigInt(value);
+    return null;
   }
-  // The only structure relied on: a text element whose parent is preceded by a sibling element holding the speaker's label.
-  // Text that cannot be attributed this way is unknown: if nothing at all in the list matches, the reader stops instead of guessing.
-  function rows(list, stats) {
-    const { rows: out, unmatched } = life.labelledRows(list, 1);
-    stats.rows = out.length; stats.unmatched = unmatched;
-    if (!out.length && unmatched) fail("CAPTION_FORMAT_UNKNOWN");
-    if (out.length > 256) fail("CAPTION_LIMIT");
-    return out;
+  function ingest(s, item) {
+    if (!item || typeof item !== "object" || !("timestampAudioSent" in item)) return;
+    const stamp = stampOf(item.timestampAudioSent), user = item.userId, text = sanitize(item.text);
+    if (stamp === null || typeof user !== "string" || !user || user.length > 512 || text === null) { life.drop(s); return; }
+    // No verified clock: each speaker's first utterance and anything older is excluded as history (and its later revisions with it).
+    let bound = s.bounds.get(user);
+    if (bound === undefined) { if (s.bounds.size >= 256) throw life.invalid(); bound = stamp; s.bounds.set(user, bound); }
+    if (!text) return;
+    life.offer(s, { key: `${stamp}/${user}`, speaker: user, text, excluded: stamp <= bound });
   }
-  function update(s, record, text) {
-    s.stats.received++;
-    record.text = text; record.revision++;
-    life.charge(s, text.length - (record.block?.transcript.length ?? 0));
-    record.block = { messageId: record.localId, deviceId: `speaker-${record.speaker}`, messageVersion: record.revision,
-      speakerName: record.name, transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
-    s.stats.accepted++;
+  function receive(s, type, payload) {
+    if (String(type) !== "3") return;
+    let body = payload;
+    if (typeof payload === "string") { if (payload.length > 262144) return; try { body = JSON.parse(payload); } catch { return; } }
+    const results = body && typeof body === "object" && Array.isArray(body.recognitionResults) ? body.recognitionResults.slice(0, 65) : null;
+    if (results) for (const item of results) ingest(s, item);
   }
-  function create(s, row, excluded) {
-    const speaker = life.speakerNumber(s, row.name);
-    const record = { speaker, name: row.name, text: row.text, revision: 0, excluded, block: null, localId: `${s.owner}:${s.records.length + 1}` };
-    life.track(s, record); s.elements.set(row.element, record);
-    if (excluded) { s.stats.baselineExcluded++; return; }
-    update(s, record, row.text);
-  }
-  function revise(s, record, text) {
-    if (text === record.text) return;
-    if (record.excluded) { record.text = text; s.stats.baselineExcluded++; return; }
-    update(s, record, text);
-  }
-  function sample(s, baseline = false) {
-    const list = findList();
-    life.observe(s, list, watch);
-    if (!list) return;
-    for (const row of rows(list, s.stats)) {
-      const known = s.elements.get(row.element);
-      if (known && known.name === row.name && related(known.text, row.text)) { revise(s, known, row.text); continue; }
-      // A re-rendered row of an utterance already seen is the same utterance, not a new one.
-      const same = s.records.slice(-32).findLast(r => r.name === row.name && related(r.text, row.text));
-      if (same && !known) { s.elements.set(row.element, same); revise(s, same, row.text); continue; }
-      create(s, row, baseline && !known);
-    }
-  }
-  const diagnose = s => { s.stats.tids = tids(); };
-  const watch = s => life.watch(s, sample, diagnose);
-  // Only the names of UI hooks (never text) help diagnose a changed Teams layout.
-  function tids() {
+  // Opt-in (assist): starts Teams' own live captions, the way Teams' UI would, when they are not running yet.
+  function startCaptions(call) {
     try {
-      const wrapper = page.document.querySelector(LIST)?.closest('[data-tid="closed-caption-renderer-wrapper"]') ?? page.document.querySelector('[data-tid="closed-caption-renderer-wrapper"]');
-      const found = new Set();
-      for (const element of wrapper?.querySelectorAll("[data-tid]") ?? []) {
-        const tid = element.getAttribute("data-tid");
-        if (/^[A-Za-z0-9_.-]{1,48}$/.test(tid ?? "")) found.add(tid);
-        if (found.size >= 12) break;
-      }
-      return [...found];
-    } catch { return []; }
+      if (typeof call.startClosedCaption !== "function") return;
+      if (typeof call.closedCaptionsHaveBeenStarted === "function" && call.closedCaptionsHaveBeenStarted()) return;
+      call.startClosedCaption();
+    } catch {}
   }
-  function metadata() {
-    const id = currentMeeting();
-    const code = !id ? "NOT_MEETING_PAGE" : findList() ? "READY" : "TEAMS_CAPTIONS_NOT_FOUND";
-    const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
-    return { status: "ready", source: "teams-dom-experimental", platform: "Teams",
-      meetings: id ? [{ id, title: "Microsoft Teams（画面字幕・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: 0, captionChannels: 0, ...stats, ...(code === "READY" ? {} : { tids: tids() }) } };
+  const WAIT = 250, ATTEMPTS = 80;
+  function attach(s) {
+    const call = activeCall(); if (!call) throw life.invalid();
+    s.call = call;
+    if (s.assisted) startCaptions(call);
+    let target = null, original = null, timer = null, tries = 0;
+    // Never throws into Teams and always hands the call on to the original handler.
+    const wrapper = function (type, payload) {
+      life.guard(s, () => receive(s, type, payload));
+      return original.apply(this, arguments);
+    };
+    const wrap = () => {
+      const found = handlerOf(call); if (!found || typeof found.handler !== "function") return false;
+      original = found.handler; target = found; found.handler = wrapper; return true;
+    };
+    // The handler can appear only once captions run (right after an assisted start): look for it for a few seconds.
+    if (!wrap()) {
+      if (!s.assisted) throw life.invalid();
+      const poll = () => {
+        timer = null; if (life.current !== s) return;
+        if (wrap()) return;
+        if (++tries >= ATTEMPTS) { finish("TEAMS_CALL_NOT_FOUND"); return; }
+        timer = page.setTimeout(poll, WAIT);
+      };
+      timer = page.setTimeout(poll, WAIT);
+    }
+    return () => { if (timer !== null) page.clearTimeout(timer); if (target && target.handler === wrapper) target.handler = original; };
   }
-  const command = params => life.domCommand(params ?? {}, { metadata, platform: "Teams", sample, diagnose, stats: { rows: 0, unmatched: 0 },
-    blocks: s => s.records.flatMap(r => r.block ? [{ ...r.block }] : []) });
+  const nameOf = (record, s) => {
+    try {
+      const call = s.call;
+      const person = call?.participants?.find?.(p => p?.mri === record.speaker);
+      if (person?.displayName) return life.displayName(person.displayName);
+      const self = call?.currentUserSkypeIdentity;
+      return self && self.mri === record.speaker ? life.displayName(self.displayName) : "";
+    } catch { return ""; }
+  };
+  function metadata(assist = false) {
+    const id = currentMeeting(), call = activeCall(), target = handlerOf(call);
+    const ready = (target && typeof target.handler === "function") || (assist && call && typeof call.startClosedCaption === "function");
+    const code = !id ? "NOT_MEETING_PAGE" : ready ? "READY" : "TEAMS_CALL_NOT_FOUND";
+    const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0 };
+    return { status: "ready", source: "teams-call-experimental", platform: "Teams",
+      meetings: id ? [{ id, title: "Microsoft Teams（通話の字幕イベント・試験版）" }] : [], captionReady: code === "READY", code,
+      diagnostics: { peers: 0, captionChannels: 0, ...stats } };
+  }
+  const command = params => life.messageCommand(params ?? {}, { metadata, platform: "Teams", attach, nameOf, extra: { bounds: new Map(), call: null } });
   Object.defineProperty(page, key, { value: Object.freeze({ version: 1, command }), configurable: false, writable: false });
   page.addEventListener("pagehide", () => finish("MEETING_CHANGED"));
 })();

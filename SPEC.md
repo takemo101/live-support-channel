@@ -2,7 +2,7 @@
 
 バージョン：0.7.0。最終更新：2026-10-20。
 
-> **試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire・合成した字幕DOM、実HTTP／MCP通知を検証。実Meet・Teams・Zoom／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Meetは字幕通信の観測、TeamsとZoomは画面字幕のDOM読取りです。
+> **試験版。実会議の互換性は未確認です。** 実ChromeのローカルWebRTC接続と合成wire・合成した内部状態（Teamsの通話オブジェクト、Zoomのstore）、実HTTP／MCP通知を検証。実Meet・Teams・Zoom／document_start拡張ロード／実Claudeの応答・権限強制は別の受入確認です。Meetは字幕通信の観測、Teamsは通話の字幕イベントの傍受、Zoomは字幕の内部状態（store）の購読です。
 
 ## 1. 目的と範囲
 
@@ -11,13 +11,13 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 実装範囲：
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
-- Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。Teams・Zoom：利用者が表示させた字幕のDOMだけを読むreader（話者は表示名）。
+- Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。話者名はMeetの名簿メッセージ（collections）から。Teams：通話の字幕イベントのハンドラを開始後だけ包む傍受。Zoom：アプリのReduxストアを開始後だけ購読（読み取りのみ）。いずれも話者は表示名。
 - 同意後の開始・一時停止・再開・停止。未知形式・字幕OFF・lease失効等で停止。
 - 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
 
-対象外：Zoomの状態ストア・ソケット・参加者一覧の読取り、Teamsの字幕開始・購読・内部状態の読取り、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
+対象外：Zoomのソケット・参加者一覧の読取り、Teamsの字幕開始（`startClosedCaption()` など、アプリの状態を変える呼び出し）・参加者名簿の取得（websocket）、Zoom・Teams・Meetの内部状態の書換え、Zoom／Teamsのデスクトップクライアント、音声録音、新しいASR、過去会議・チャット・画像・翻訳別フィードの取得、会議相手への自動送信・代返、編集・Shell、任意の既存Claudeセッションへの注入、永続キュー、完全な議事録・exactly-once配送保証。
 
 字幕は取得できた一部分です。初回ID除外、通信遅延・欠落等があり、全文や確定発話と扱ってはいけません。本人の未確認の納期・予算を確約せず、事実・提案・未確認を分けます。Skillの指示は完全なプロンプトインジェクション防御の保証ではありません。
 
@@ -28,8 +28,8 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 | Node.js | 22以上（検証24.15.0） |
 | Chrome | 125以上、DevTools使用（ローカルRTC検証155） |
 | Meet | httpsのmeet.google.com会議top frame（`/abc-defg-hij` または `/meet/abc-defg-hij`）。参加前にフック準備、標準字幕ON |
-| Teams | https の teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame。ライブキャプションを表示 |
-| Zoom | https の app.zoom.us Webクライアントの会議ページ（`/wc/<番号>/…`）。字幕を画面に表示 |
+| Teams | https の teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame。ライブキャプションをON（通話情報が見つかること） |
+| Zoom | https の app.zoom.us Webクライアントの会議ページ（`/wc/<番号>/…`）。字幕（ライブトランスクリプション）をON（字幕のstoreが見つかること） |
 | UI言語 | 字幕ボタンの判定は日本語／英語。その他は未対応として停止 |
 | Tactiq | 不要。他字幕拡張との同居は未確認 |
 | Claude Code | Channels・restricted・セッションplugin・Skill Shell前処理無効化に対応。CLI確認2.1.302／2.1.303 |
@@ -76,7 +76,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 1. 参加者同意、組織規程、Anthropic側のデータ取扱いを確認する。
 2. **会議参加前**に拡張を読み込み、サイトアクセスを本人が許可する。更新時は会議タブを閉じて開き直してから参加する（Meetは参加前の準備が必要）。
-3. 会議側で字幕をONにする（Meetは標準字幕、Teamsはライブキャプション、Zoomは字幕を画面に表示）。Chrome全体の自動字幕ではない。
+3. 会議側で字幕をONにする（Meetは標準字幕、Teamsはライブキャプション、Zoomは字幕）。画面の字幕表示は読まないので、表示の有無は取得に関係しない。Chrome全体の自動字幕ではない。
 4. そのタブのDevTools → **Live Support**。パネルを開くと準備を自動確認し、会議は1件なら自動選択する。token入力 → 同意 → 転送開始（tokenは受信サーバーが受理した後、ブラウザ終了まで `chrome.storage.session` に記憶。「再確認」で再検査）。
 5. パネルを表示したまま使う。起動直後から参照するプロジェクトも非機密の範囲を選ぶ。
 
@@ -88,7 +88,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 これは生成時刻による厳密な境界ではない。検証済みの生成時刻fieldがなく、受信時刻とID順序に依存するため、遅配・履歴を完全に見分ける保証はない。生成時刻での完全な区間分離が必要な会議には使わない。
 
-参加者一覧は収集しない。話者名は画面に表示されている表示名を送る（読み取れないときだけ「話者N（名前未確認）」）。表示名は制御・双方向制御文字を除いて64文字に制限し、非信頼・未検証のラベルとして扱う。内部device IDと画像URLは送らない。本人の特定は `/meeting` スキルが本人に確認した名前だけを根拠にし、本人の発言は助言・要約・引用に含めない。本人の役割は推測で決めない。
+参加者一覧は収集しない。話者名は会議サービス自身が持つ表示名を送る（読み取れないときだけ「話者N（名前未確認）」）。表示名は制御・双方向制御文字を除いて64文字に制限し、非信頼・未検証のラベルとして扱う。内部device IDと画像URLは送らない。Meetの名簿（device ID → 表示名）だけは、参加直後に送られるため、同意前からメモリ上に最大256件保持する（送信・保存しない）。本人の特定は `/meeting` スキルが本人に確認した名前だけを根拠にし、本人の発言は助言・要約・引用に含めない。本人の役割は推測で決めない。
 
 ### 一時停止・停止
 
@@ -124,17 +124,19 @@ Meet限定 MAIN/document_start：RTCPeerConnectionを準備
  → Host／Origin／schema／size／sequence検査 → Claude Channels
 ```
 
-extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、字幕本文をDOMから読むfallback・fetch・WebSocket・チャット・他拡張へfallbackしない。話者名の付与だけ、画面に表示された字幕リスト（`div[role=region][tabindex=0]`）を読み取り専用で走査し、本文が一致する行の名前が1つに決まる場合だけ使う（曖昧・字幕非表示では匿名のまま。DOMは書き換えない）。サイトのCSPと管理ポリシーに従う。
+extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環境に置き、constructor/createDataChannelとincoming datachannelを観測する。元の引数・結果・send・binaryTypeを変更せず、字幕本文をDOMから読むfallback・fetch・WebSocket・チャット・他拡張へfallbackしない。話者名は、`collections` チャネルの名簿メッセージ（protobuf。生または gzip）から device ID → 表示名を最大256件メモリに保つだけで、形式が違えば無視する（名前が付かないだけで停止しない）。サイトのCSPと管理ポリシーに従う。
 
 同意後、識別可能な既存のordered字幕チャネルを優先する。無ければ識別済みの会議接続に自分のordered captions_v2／captionsを追加する。最初の有効packetで一つに固定し、不要になった自分のチャネルだけ閉じる。ACKは自分のv2チャネルへだけ返す。字幕ON・言語・認証・権限や元の通信は書き換えない。
+
+**実験オプション（パネルのチェックボックス、既定OFF）：字幕がOFFでも開始。** Teams：開始時に、通話の `startClosedCaption()` を、`closedCaptionsHaveBeenStarted()` が偽のときだけ1回呼ぶ（Teamsの状態を変える唯一の呼び出し）。字幕イベントのハンドラは字幕が動き出してから現れうるため、250msごと最大80回（約20秒）探して包み、見つからなければ `TEAMS_CALL_NOT_FOUND` で停止する。recoverは元の開始の設定を引き継ぐ。Zoomは字幕を開始する手段を実装しない（対象外）。Meetは次のとおり。
 
 **実験オプション（パネルのチェックボックス、既定OFF）：字幕ボタンOFFでの開始。** 例外としてこの時だけ、(1) `RTCDataChannel.prototype.send` を観測専用で包み、ラベルが `media-session` のMeet自身の制御フレーム（4096 bytes以下）から、コマンド番号`op`・ACK連番・字幕言語コード（`[A-Za-z]{2,3}(-…)`、32文字以下）の3値だけを保持する（他のラベルは中身に触れず、送信内容は変更しない）。(2) 字幕ボタンがOFFのstart時に限り、観測した言語と番号から `op+1` の字幕設定コマンド（BigPacket.envelope(1).command(2){op=1, captionUpdate=3{clientConfig=1{captionConfig=9{lang_1,lang_2}}, updateMask=2{paths=["client_config.caption_config"]}}}）と、ACK連番+1／+2の小フレーム（envelope(1).ack(1){seq=2, ok=3}）2つを、media-sessionチャネルへ**1チャネルにつき1回だけ**書き込む。再試行・Meet送信の書換えはしない。recoverでは書き込まず、元がassistedだった場合だけ字幕OFFを許容する。形式はTactiq 3.1.7185の静的解析（実行なし）による。media-sessionが特定できない／言語未観測／送信失敗は `MEDIA_SESSION_NOT_FOUND`／`CAPTION_LANGUAGE_UNKNOWN`／`CAPTION_ENABLE_FAILED`。**実Meetで未検証。連番の衝突などでMeetの制御通信を乱す恐れがあり、字幕設定がMeet側に残り得る。**非機密のテスト会議でのみ確認する。
 
 snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
-**Teams（画面字幕のDOM読取り・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0は `main-channel` のRTC観測だったが、実Teamsで字幕JSONの形式が合わず取得できなかったため、Zoomと同じ**画面に表示された字幕の読取り**へ切り替えた（RTCの観測・ラベル収集は廃止）。読むのは利用者がTeamsで表示させたライブキャプションのリスト `[data-tid="closed-caption-v2-virtual-list-content"]` だけ。チャネル・送信・トークン・アプリ内部状態・名簿は読まず、字幕の開始・言語設定もしない（Teams側でライブキャプションをONにするのは利用者）。discoverはリストの有無だけを見て本文には触れず、無ければ `TEAMS_CAPTIONS_NOT_FOUND`（開始不可）。開始後だけリストへMutationObserverを付け、readごとに再走査してリストの差し替えにも追従する。依存する構造は「本文の要素の親の直前の兄弟要素が話者ラベル」だけで、本文はあるのに該当行が1つも無いリストは `CAPTION_FORMAT_UNKNOWN` で停止する（推測しない）。話者ラベルは同一視のページ内キーにだけ使い、出現順に匿名化（`speaker-N`／「話者 N（名前未確認）」）して、表示名は送らない。行は要素単位で追跡し、同じ話者で先頭16文字が共通する本文は同じ発話の修正（Teamsは字幕をその場で訂正する）、そうでなければ新しい発話にする。開始・recover時に既に表示されていた行とその修正は送らず、再描画で新しい要素になった既出の発話は重複送信しない。DOMは書き換えない。診断は件数（字幕行・構造不明・受信・採用）と、字幕リスト周辺の `data-tid` 名（本文は含まない）だけ。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**セレクタと構造はTranscripTonic（MIT）の公開ソースを参考にした仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると停止する（その場合は診断のdata-tidで確認）。
+**Teams（通話の字幕イベントの傍受・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0のRTC `main-channel` 観測と、その後の画面字幕DOMの読取りは廃止した。Teamsのアプリが公開する通話の文脈（`window.msteamscalling` のWeakRef → `callingService.getActiveCall()`）から、データチャネルの購読 `remoteUserEventsReceived` のハンドラを探す（見つからなければ `TEAMS_CALL_NOT_FOUND`）。**開始後だけ**そのハンドラを包み、種別 `"3"` のJSON（`recognitionResults[]`、`timestampAudioSent`・`userId`・`text`）を読む。元のハンドラは常に呼び（例外はページへ伝えない）、終了・期限切れ・通話終了で元に戻す。包む前・停止後は何も処理しない。字幕の開始（`startClosedCaption()`）はせず、利用者がTeamsでONにする。話者は `userId`（内部ID）を出現順に匿名番号化し、名前は通話の参加者情報（`participants[].mri` → `displayName`）から、取れなければ匿名のまま。`timestampAudioSent` は数値（大きな整数を含む）または数字の文字列、各話者の最初の発話と、それ以前・同時刻の発話とその修正は履歴として送らない。使えない項目（必須項目の欠落・不正な型）は個別に捨てて数え、使える項目が1つもないまま50件を超えたときだけ `CAPTION_FORMAT_UNKNOWN` で停止する。通話が終われば `TEAMS_CALL_ENDED`。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**呼び出しの構造と形式はTactiq（解析）の仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると見つからず停止する。
 
-**Zoom（v0.7、画面字幕のDOM読取り・試験版）。** `zoom-hook.js` は app.zoom.us のtop frame（https）で、会議ページ `/wc/<5〜15桁>/…` にだけ入る（他の *.zoom.us は `PLATFORM_NOT_IMPLEMENTED`）。会議IDは `app.zoom.us/wc/<番号>`。Meet／Teamsのように通信チャネルから取れる経路は特定できず、状態ストア・ソケット・名簿は読まない方針のため、**ユーザーがZoomで表示させた字幕ボックス（`#webclient` iframe内の `.live-transcription-subtitle__box`）だけ**を読む。開始までは箱の中身に触れず（discoverはiframeの有無だけ）、開始後だけ箱へMutationObserverを付け、readごとに再走査して箱の差し替えにも追従する。依存する構造は「`<img>`（アバター）の次の兄弟要素が本文」だけで、本文はあるのに該当行が無い箱は `CAPTION_FORMAT_UNKNOWN` で停止する（推測しない）。話者はアバターURLのハッシュを出現順に匿名化（`speaker-N`、同じアバターは同一視）し、アバターURL・表示名・タイル名は送らない。行は要素単位で追跡し、本文が前の表示の続き（末尾追加、または先頭が欠けた続き）なら同じ発話の修正、無関係なら新しい発話にする。開始・recover時に既に表示されていた行とその続きは送らず、再描画で新しい要素になった既出の発話は重複送信しない。DOMは書き換えない。lease・所有者・recoverはMeetと同じ。**セレクタと構造はTranscripTonic（MIT）の公開ソースによる推定で、実Zoomでは未検証。**画面更新で壊れ得て、字幕が非表示の間は何も届かない。
+**Zoom（字幕の内部状態の購読・試験版）。** `zoom-hook.js` は app.zoom.us のtop frame（https）で、会議ページ `/wc/<5〜15桁>/…` にだけ入る（他の *.zoom.us は `PLATFORM_NOT_IMPLEMENTED`）。会議IDは `app.zoom.us/wc/<番号>`。v0.7.0の画面字幕のDOM読取りは廃止した。アプリのReact木（`#webclient` iframe、`.pwa-webclient__iframe-wrapper iframe`、なければトップ文書）の `__reactContainer*` からたどり、`props.store`（`getState`／`subscribe`／`dispatch`を持ち、状態に `newLiveTranscription` があるもの）を探す（見つからなければ `ZOOM_STORE_NOT_FOUND`）。**開始後だけ**そのストアを `subscribe` し（読み取りのみ、dispatchもreducerの差し替えもしない）、`newLiveTranscription.newLTMessage`（msgId → `{ user: { zoomID, displayName }, text }`）の変化を読む。開始時にあるメッセージとその後の変化は履歴として送らない。`msgId/zoomID` を発話ID、本文の変化を改訂として扱う。本文は先頭の改ページ・NUL・置換文字を除く。使えない項目は個別に捨てて数え、使える項目がないまま50件を超えたときだけ停止する。話者名はメッセージの表示名。lease・所有者・recoverはMeetと同じ。**ストアの構造はTactiq（解析）の仮定で、実Zoomでは未検証。**Zoomの更新で構造が変わると見つからず停止する。
 
 正のsigned-int64（1〜2^63-1）の発話IDはBigIntで正確に比較し、氏名や一致した本文からIDを推測しない。既知IDの修正はupsert、未知の逆順IDや同番号異本文は停止する。詳しいwire根拠・条件は [native-captions.md](docs/native-captions.md) を参照。
 
@@ -213,7 +215,8 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 | --- | --- |
 | RTC_HOOK_NOT_READY | Meetサイトアクセスを本人が許可し、拡張更新後にMeetタブを参加前から再読み込み |
 | RTC_CONNECTION_NOT_FOUND | Meet：会議参加・標準字幕ON・参加前注入を確認。後から既存接続を見つける保証はない |
-| TEAMS_CAPTIONS_NOT_FOUND | Teamsのライブキャプションが画面に表示されていない。Teams側でONにして「再確認」 |
+| TEAMS_CALL_NOT_FOUND／TEAMS_CALL_ENDED | 会議に参加しライブキャプションをONにして「再確認」。見つからない場合はTeamsの内部構造の変更を疑う。通話終了で停止 |
+| ZOOM_STORE_NOT_FOUND | 会議に参加し字幕（ライブトランスクリプション）をONにして「再確認」。見つからない場合はZoomの内部構造の変更を疑う |
 | RTC_CONNECTION_AMBIGUOUS | 接続を特定できないため取得しない |
 | RTC_PREPARE_FAILED／RTC_RESOURCE_LIMIT | 他の字幕拡張との競合・管理ポリシー・上限を確認。安全機能を無効化しない |
 | CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認。OFFのまま使うなら実験オプション |
@@ -255,7 +258,7 @@ npm audit --omit=dev
 
 Node標準test runner。合成protobuf／gzip／不正・上限・signed-int64境界・consent／lease／owner／遅延結果、panelとreadonly CLI、実HTTP／SDK MCP、再送／EOF、packing／隔離導入を検証する。
 
-実Chromeテストは独立した一時profileとfile fixture、テスト用Meet／Teams／Zoom URL stub（Teams・Zoomは合成の字幕DOM）を使い、**実際の2つのRTCPeerConnection**で合成バイナリを送受信し、own ACK・停止・leaseとHTTP/MCP通知を確認する。実Meetやアカウントは使わない。Chromeがなければskipするため、その場合はブラウザ確認済みと報告しない。
+実Chromeテストは独立した一時profileとfile fixture、テスト用Meet／Teams／Zoom URL stub（Teams・Zoomは合成の通話オブジェクト・store）を使い、**実際の2つのRTCPeerConnection**で合成バイナリを送受信し、own ACK・停止・leaseとHTTP/MCP通知を確認する。実Meetやアカウントは使わない。Chromeがなければskipするため、その場合はブラウザ確認済みと報告しない。
 
 **実Meetの現行wire、document_start拡張の実ロード／サイトCSP、実DevToolsから実会議、実Claude／Haikuのモデル受信・権限強制、長時間の精度・欠落率・費用は未確認**。ローカルRTC成功はこれらの代替証拠ではない。
 

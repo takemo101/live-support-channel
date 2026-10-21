@@ -159,10 +159,9 @@
     let speaker = s.speakers.get(packet.device);
     if (!speaker) {
       if (s.speakers.size >= 256) fail("CAPTION_LIMIT");
-      speaker = { number: s.speakers.size + 1, boundary: packet.id, max: packet.id, name: "", tried: 0 };
+      speaker = { number: s.speakers.size + 1, boundary: packet.id, max: packet.id, device: packet.device };
       s.speakers.set(packet.device, speaker);
     }
-    if (!speaker.name && packet.text !== null) { const at = wallTime(); if (at - speaker.tried >= 500) { speaker.tried = at; speaker.name = lookupName(packet.text); } }
     // shortcut: no verified generation timestamp; exclude each speaker's first ID and older IDs, not just one revision.
     if (packet.id <= speaker.boundary) { s.stats.baselineExcluded++; return; }
     const id = `${speaker.number}:${packet.id}`;
@@ -187,23 +186,73 @@
       timestamp: record.block?.timestamp ?? wallTime(), version: packet.revision };
     s.stats.accepted++;
   }
-  // Meet's caption packets carry no names. The visible caption list does: a speaker is named only when exactly one name shows text matching the packet.
-  const REGION = 'div[role="region"][tabindex="0"]';
-  function lookupName(text) {
-    try {
-      const key = life.letters(text); if (key.length < 8) return "";
-      const names = new Set();
-      for (const region of page.document.querySelectorAll(REGION)) {
-        for (const row of life.labelledRows(region, 0).rows) {
-          const other = life.letters(row.text);
-          if (other.length >= 8 && (other.startsWith(key) || key.startsWith(other))) names.add(row.name);
-          if (names.size > 1) return "";
-        }
-      }
-      return names.size === 1 ? [...names][0] : "";
-    } catch { return ""; }
+  // Meet's caption packets carry only an opaque device id. The names come from Meet's own roster messages on the "collections" channel
+  // (device id -> display name). Unlike captions this is read from the moment the channel exists, because the roster is sent at join and a
+  // later start would never see it. Only (device id, sanitised name) pairs are kept, in memory, at most 256, and nothing is sent before consent.
+  const roster = new Map();
+  const deviceKey = id => String(id).replace(/^@/, "");
+  function items(bytes) {
+    const out = []; const cursor = { pos: 0 };
+    while (cursor.pos < bytes.length) {
+      const tag = varint(bytes, cursor), field = Number(tag >> 3n), wire = Number(tag & 7n);
+      if (!field) invalid();
+      if (wire === 0) { varint(bytes, cursor); continue; }
+      let length;
+      if (wire === 2) { const n = varint(bytes, cursor); if (n > BigInt(LIMIT)) invalid(); length = Number(n); }
+      else if (wire === 1) length = 8; else if (wire === 5) length = 4; else invalid();
+      if (cursor.pos + length > bytes.length) invalid();
+      if (wire === 2) out.push({ field, value: bytes.subarray(cursor.pos, cursor.pos + length) });
+      cursor.pos += length;
+    }
+    return out;
   }
-  const nameOf = speaker => speaker.name || `話者 ${speaker.number}（名前未確認）`;
+  // Follows a path of length-delimited field numbers; a repeated field fans out.
+  function walk(bytes, path) {
+    let layer = [bytes];
+    for (const field of path) { const next = []; for (const part of layer) for (const item of items(part)) if (item.field === field) next.push(item.value); layer = next.slice(0, 256); }
+    return layer;
+  }
+  function note(device) {
+    let id = "", name = "";
+    for (const item of items(device)) {
+      let value; try { value = new Decoder("utf-8", { fatal: true }).decode(item.value); } catch { return; }
+      if (item.field === 1 && !id) id = value; else if (item.field === 2 && !name) name = value;
+    }
+    name = life.displayName(name); id = deviceKey(id);
+    if (id && id.length <= 512 && name && (roster.has(id) || roster.size < 256)) roster.set(id, name);
+  }
+  // Roster frames follow the same wrapping as captions: raw protobuf, or gzip at offset 0 or 3.
+  async function learn(data) {
+    try {
+      let raw;
+      if (data instanceof BinaryBlob) { if (data.size > LIMIT) return; raw = new Bytes(await data.arrayBuffer()); }
+      else if (data instanceof Buffer) { if (data.byteLength > LIMIT) return; raw = new Bytes(data).slice(); }
+      else if (Buffer.isView(data)) { if (data.byteLength > LIMIT) return; raw = new Bytes(data.buffer, data.byteOffset, data.byteLength).slice(); }
+      else return;
+      const gzip = offset => raw.length >= offset + 3 && raw[offset] === 31 && raw[offset + 1] === 139 && raw[offset + 2] === 8;
+      const offset = gzip(0) ? 0 : gzip(3) ? 3 : -1;
+      let bytes = raw;
+      if (offset >= 0) {
+        const reader = new BinaryBlob([raw.subarray(offset)]).stream().pipeThrough(new Inflate("gzip")).getReader();
+        const chunks = []; let size = 0;
+        for (;;) {
+          const { value, done } = await reader.read(); if (done) break;
+          size += value.length; if (size > LIMIT) { await reader.cancel(); return; }
+          chunks.push(value);
+        }
+        bytes = new Bytes(size); let position = 0;
+        for (const chunk of chunks) { bytes.set(chunk, position); position += chunk.length; }
+      }
+      for (const device of walk(bytes, [2, 2, 2])) note(device);
+      for (const device of walk(bytes, [1, 2, 13, 1, 2])) note(device);
+    } catch {}
+  }
+  let rosterBusy = 0;
+  function rosterFrame(event) {
+    if (event.isTrusted !== true || rosterBusy >= 8) return;
+    rosterBusy++; learn(event.data).finally(() => { rosterBusy--; });
+  }
+  const nameOf = speaker => roster.get(deviceKey(speaker.device)) || `話者 ${speaker.number}（名前未確認）`;
   function receive(entry, event) {
     const s = life.current;
     if (!s || !s.entries.has(entry) || event.isTrusted !== true || event.timeStamp < s.started || !valid(s)) return;
@@ -256,6 +305,7 @@
     const entry = { channel, label, owned }; connection.channels.add(entry);
     try {
       if (captionLabels.has(label)) channel.addEventListener("message", event => receive(entry, event));
+      else if (label === "collections") channel.addEventListener("message", rosterFrame);
       channel.addEventListener("close", () => {
         connection.channels.delete(entry);
         if (life.current?.entries.has(entry)) finish("CAPTION_CHANNEL_CLOSED");
@@ -326,7 +376,7 @@
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, queued: 0 };
     return { status: "ready", source: "meet-rtc-experimental", platform: "Google Meet",
       meetings: id ? [{ id, title: "Google Meet（字幕通信・試験版）" }] : [], captionReady: code === "READY", code,
-      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, profile: life.current?.selected?.label ?? "pending" } };
+      diagnostics: { peers: peers.size, captionChannels: selected ? [...selected.channels].filter(entry => captionLabels.has(entry.label)).length : 0, ...stats, names: roster.size, profile: life.current?.selected?.label ?? "pending" } };
   }
   function command(params = {}) {
     const { action, meetingId, captureId, assistCaptions } = params;
@@ -384,5 +434,5 @@
       NativeChannel.send = function (...args) { try { observeMedia(this, args[0]); } catch {} return nativeSend.apply(this, args); };
     } catch {}
   } catch { prepareError = "RTC_PREPARE_FAILED"; }
-  page.addEventListener("pagehide", () => finish("MEETING_CHANGED"));
+  page.addEventListener("pagehide", () => { roster.clear(); finish("MEETING_CHANGED"); });
 })();

@@ -1,6 +1,6 @@
-# Meet字幕通信reader：根拠・制限・診断（TeamsとZoomは画面字幕のDOM読取り。SPEC参照）
+# Meet字幕通信reader：根拠・制限・診断（TeamsとZoomは内部の呼び出し・状態の傍受。SPEC参照）
 
-対象：v0.7.0、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** 本書はGoogle Meetの字幕通信readerの根拠で、実会議・実Claudeは未確認。TeamsとZoomは画面字幕のDOM読取りの試験版（SPEC参照）で、どちらも実機未検証です。
+対象：v0.7.0、2026-10-20。**実装済みと現行Meetでの動作確認済みは別です。** 本書はGoogle Meetの字幕通信readerの根拠で、実会議・実Claudeは未確認。TeamsとZoomは内部の呼び出し・状態の傍受の試験版（SPEC参照）で、どちらも実機未検証です。Meetの話者名は `collections` チャネルの名簿から付けます（形式はTactiqの解析に基づく仮定で、実機未検証）。
 
 ## 方式変更の経緯
 

@@ -78,9 +78,9 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
       captionReady = result.captionReady === true && result.code === "READY";
       if (captionReady) { el("meeting").value = result.meetings[0].id; platform = ["Teams", "Zoom"].includes(result.platform) ? result.platform : "Google Meet"; }
       status(!captionReady ? describe(result) : platform === "Teams"
-        ? "準備OK（Teams）。画面に表示されているライブキャプションだけを読みます。トークンを入力し、同意にチェックして「転送開始」を押してください。字幕を消している間は何も届きません。"
+        ? "準備OK（Teams）。Teamsのライブキャプションを開始してから、トークンを入力し、同意にチェックして「転送開始」を押してください。通話の字幕イベントだけを受け取ります（画面は読みません）。字幕を開始していない間は何も届きません。"
         : platform === "Zoom"
-        ? "準備OK（Zoom）。Zoomの字幕（ライブトランスクリプション）を画面に表示してから、トークンを入力し、同意にチェックして「転送開始」を押してください。画面に出ている字幕だけを読みます。"
+        ? "準備OK（Zoom）。Zoomの字幕（ライブトランスクリプション）をONにしてから、トークンを入力し、同意にチェックして「転送開始」を押してください。Zoomの字幕の内部状態だけを受け取ります（画面は読みません）。"
         : "準備OKです。トークンを入力し、同意にチェックして「転送開始」を押してください。");
     } catch (error) { if (run === generation) status(describe(error)); }
     finally { if (run === generation) controls(); }
