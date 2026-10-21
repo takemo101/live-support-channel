@@ -97,11 +97,9 @@
         transcript: text, timestamp: record.block?.timestamp ?? wallTime(), version: record.revision };
       s.stats.accepted++;
     }
-    // An item the reader could not use. Only a stream of nothing but unusable items is treated as an unknown format (the reader stops).
-    function drop(s) {
-      s.stats.dropped++;
-      if (s.stats.dropped >= 50 && s.stats.accepted + s.stats.baselineExcluded === 0) throw invalid();
-    }
+    // An item the reader could not use: it is never forwarded and never stops the capture (a channel can carry plenty of non-caption traffic
+    // before the first caption); the count is what the panel shows.
+    function drop(s) { s.stats.dropped++; }
     const stop = (s, error) => {
       if (current !== s) return;
       finish(error?.code === "CAPTION_LIMIT" ? "CAPTION_LIMIT" : "CAPTION_FORMAT_UNKNOWN");

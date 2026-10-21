@@ -293,7 +293,7 @@
     } catch { parts.push("!"); }
     return parts.join(",");
   }
-  // Subscribes with channels of our own, the way the app's own client does (both profiles, ordered, limited retransmits).
+  // Subscribes with channels of our own, the way the app's own client does (both profiles, ordered, limited retransmits), when Meet has none to observe.
   function subscribe(s) {
     const target = s.connection;
     for (const label of ["captions_v2", "captions"]) {
@@ -306,24 +306,14 @@
       if (!entry) { closeOwned({ channel, owned: true }); fail("CAPTION_SUBSCRIPTION_FAILED"); }
       s.entries.add(entry);
     }
-    s.ownTried = true; return null;
-  }
-  // A channel whose frames are never usable is given up on by itself; the capture stops only when no channel is left (after trying our own subscription once).
-  function abandon(s, entry) {
-    s.entries.delete(entry); closeOwned(entry);
-    if (s.entries.size || s.stats.accepted + s.stats.baselineExcluded > 0) return;
-    if (!s.ownTried) {
-      try { if (subscribe(s) === null && s.entries.size) return; } catch { finish("CAPTION_SUBSCRIPTION_FAILED"); return; }
-    }
-    if (life.current === s && !s.entries.size) throw invalid();
+    return null;
   }
   function reject(s, entry, reason, bytes) {
-    s.stats[reason] = (s.stats[reason] ?? 0) + 1; s.stats.dropped++; entry.junk++;
+    s.stats[reason] = (s.stats[reason] ?? 0) + 1; s.stats.dropped++;
     if (bytes && s.stats.shapes.length < 3) {
       const shape = `${entry.label}:#${bytes.length}:${shapeOf(bytes)}`;
       if (!s.stats.shapes.includes(shape)) s.stats.shapes.push(shape);
     }
-    if (entry.junk >= 50 && entry.good === 0) abandon(s, entry);
   }
   function receive(entry, event) {
     const s = life.current;
@@ -352,7 +342,7 @@
           if (!bytes || !valid(s) || !s.entries.has(job.entry)) continue;
           const packet = decode(bytes, job.entry.label);
           if (typeof packet === "string") reject(s, job.entry, packet, bytes);
-          else { job.entry.good++; if (packet) ingest(s, job.entry, packet); }
+          else if (packet) ingest(s, job.entry, packet);
         } finally { s.stats.queued = Math.max(0, s.stats.queued - 1); s.stats.inFlight = 0; }
       }
     } catch (error) {
@@ -379,7 +369,7 @@
     if (!["captions", "captions_v2", "collections", "media-session"].includes(label)) return null;
     for (const entry of connection.channels) if (entry.channel === channel) return entry;
     if (connection.channels.size >= 32) { prepareError = "RTC_RESOURCE_LIMIT"; finish(prepareError); return null; }
-    const entry = { channel, label, owned, junk: 0, good: 0 }; connection.channels.add(entry);
+    const entry = { channel, label, owned }; connection.channels.add(entry);
     try {
       if (captionLabels.has(label)) channel.addEventListener("message", event => receive(entry, event));
       else if (label === "collections") channel.addEventListener("message", rosterFrame);
@@ -472,7 +462,7 @@
       const target = choices[0]; life.clearTerminal();
       const s = { owner: captureId, meetingId, connection: target, assisted, entries: new Set(), selected: null,
         records: new Map(), speakers: new Map(), characters: 0, started: now(), queue: [], reader: null,
-        stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0, shapes: [] }, ownTried: false };
+        stats: { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0, shapes: [] } };
       life.activate(s);
       try {
         for (const entry of target.channels) if (!entry.owned && captionLabels.has(entry.label) && entry.channel.ordered && ["open", "connecting"].includes(entry.channel.readyState)) s.entries.add(entry);

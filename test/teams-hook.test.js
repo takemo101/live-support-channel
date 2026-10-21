@@ -88,13 +88,12 @@ test("timestamps may be large integers or numeric strings; unusable items are dr
   assert.deepEqual(f.blocks().map(b => b.transcript), ["string stamp", "unsafe integer stamp"]);
   assert.equal(f.command("read").diagnostics.dropped, 2); assert.equal(f.command("read").status, "live");
 });
-test("only a stream of nothing usable stops the capture as an unknown format", () => {
+test("unusable items never stop the capture, however many arrive before the first caption", () => {
   const f = fixture(); f.command("start");
-  f.say(item(1, "u-alice", 1, "history")); for (let i = 0; i < 60; i++) f.say({ timestampAudioSent: i, text: "x" });
-  assert.equal(f.command("read").status, "live", "junk next to real traffic is tolerated");
-  const g = fixture(); g.command("start"); for (let i = 0; i < 60; i++) g.say({ timestampAudioSent: i, text: "x" });
-  const ended = g.command("read"); assert.equal(ended.status, "ended"); assert.equal(ended.code, "CAPTION_FORMAT_UNKNOWN");
-  assert.equal(g.call.on.received.length, 60, "the page never saw an error");
+  for (let i = 0; i < 300; i++) f.say({ timestampAudioSent: i, text: "x" });
+  assert.equal(f.command("read").status, "live"); assert.equal(f.command("read").diagnostics.dropped, 300);
+  f.say(item(1, "u-alice", 1, "history")); f.say(item(2, "u-alice", 1, "the first real caption"));
+  assert.deepEqual(f.blocks().map(b => b.transcript), ["the first real caption"]); assert.equal(f.call.on.received.length, 302, "the page never saw an error");
 });
 test("the call ending stops the capture; an abandoned lease expires and recover continues without replaying history", () => {
   const f = fixture(); f.command("start"); f.say(item(1, "u-alice", 1, "history")); f.say(item(2, "u-alice", 1, "kept"));

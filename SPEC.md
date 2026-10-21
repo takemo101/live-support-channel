@@ -12,7 +12,7 @@ Chrome上のMeet・Teams・Zoom（Webクライアント）の字幕を、明示�
 
 - GitHubからグローバル導入。一度に1プロジェクトへ配信。
 - Meet：参加前フックで、captions／captions_v2の既知wireだけを処理する独立reader。必要時の独自購読とown-v2 ACK。話者名はMeetの名簿メッセージ（collections）から。Teams：通話の字幕イベントのハンドラを開始後だけ包む傍受。Zoom：アプリのReduxストアを開始後だけ購読（読み取りのみ）。いずれも話者は表示名。
-- 同意後の開始・一時停止・再開・停止。使えるフレームが1つもない（50件超）・字幕OFF・lease失効等で停止。
+- 同意後の開始・一時停止・再開・停止。字幕OFF・lease失効・チャネル終了・上限等で停止（字幕として使えないデータだけでは止めない）。
 - 約1秒のsnapshot／heartbeat。差分送信はパネルの「転送のまとめ方」：発話の区切りごと（既定。字幕が3秒静か、または最古の未送信の変化が45秒）／約30秒／約5秒。失敗後は5秒空けて再送。発話IDと改訂でupsert。
 - 認証付きloopback HTTP、一方向Channels通知、未確認バッチの再送とプロセス内重複抑止。
 - `skills/meeting/SKILL.md` による継続支援。Read／Glob／Grep／Skillのみ公開。
@@ -134,9 +134,9 @@ extension/meet-hook.js はclassic script。MAIN worldでページと同じJS環�
 
 snapshot.js の readCaptions は自作の凍結APIだけを呼ぶ。discoverはmetadata、startは所有者付き取得、readはsnapshotとlease更新、resetは一致する所有者だけを解放する。検査対象host／top frame／会議一致をAPIアクセス前に確認する。旧DOMのCAPTION_ROWS_NOT_FOUND経路は削除した。
 
-**Teams（通話の字幕イベントの傍受・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0のRTC `main-channel` 観測と、その後の画面字幕DOMの読取りは廃止した。Teamsのアプリが公開する通話の文脈（`window.msteamscalling` のWeakRef → `callingService.getActiveCall()`）から、データチャネルの購読 `remoteUserEventsReceived` のハンドラを探す（見つからなければ `TEAMS_CALL_NOT_FOUND`）。**開始後だけ**そのハンドラを包み、種別 `"3"` のJSON（`recognitionResults[]`、`timestampAudioSent`・`userId`・`text`）を読む。元のハンドラは常に呼び（例外はページへ伝えない）、終了・期限切れ・通話終了で元に戻す。包む前・停止後は何も処理しない。字幕の開始（`startClosedCaption()`）はせず、利用者がTeamsでONにする。話者は `userId`（内部ID）を出現順に匿名番号化し、名前は通話の参加者情報（`participants[].mri` → `displayName`）から、取れなければ匿名のまま。`timestampAudioSent` は数値（大きな整数を含む）または数字の文字列、各話者の最初の発話と、それ以前・同時刻の発話とその修正は履歴として送らない。使えない項目（必須項目の欠落・不正な型）は個別に捨てて数え、使える項目が1つもないまま50件を超えたときだけ `CAPTION_FORMAT_UNKNOWN` で停止する。通話が終われば `TEAMS_CALL_ENDED`。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**呼び出しの構造と形式はTactiq（解析）の仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると見つからず停止する。
+**Teams（通話の字幕イベントの傍受・試験版）。** `teams-hook.js` は teams.microsoft.com／teams.live.com／teams.cloud.microsoft のtop frame（https）でだけMAIN/document_startに入る。v0.6〜v0.7.0のRTC `main-channel` 観測と、その後の画面字幕DOMの読取りは廃止した。Teamsのアプリが公開する通話の文脈（`window.msteamscalling` のWeakRef → `callingService.getActiveCall()`）から、データチャネルの購読 `remoteUserEventsReceived` のハンドラを探す（見つからなければ `TEAMS_CALL_NOT_FOUND`）。**開始後だけ**そのハンドラを包み、種別 `"3"` のJSON（`recognitionResults[]`、`timestampAudioSent`・`userId`・`text`）を読む。元のハンドラは常に呼び（例外はページへ伝えない）、終了・期限切れ・通話終了で元に戻す。包む前・停止後は何も処理しない。字幕の開始（`startClosedCaption()`）はせず、利用者がTeamsでONにする。話者は `userId`（内部ID）を出現順に匿名番号化し、名前は通話の参加者情報（`participants[].mri` → `displayName`）から、取れなければ匿名のまま。`timestampAudioSent` は数値（大きな整数を含む）または数字の文字列、各話者の最初の発話と、それ以前・同時刻の発話とその修正は履歴として送らない。使えない項目（必須項目の欠落・不正な型）は個別に捨てて数える（その数では停止しない）。通話が終われば `TEAMS_CALL_ENDED`。会議IDはURLで特定できないため `<host>/call` 固定で、lease・所有者・recoverはMeetと同じ。**呼び出しの構造と形式はTactiq（解析）の仮定で、実Teamsでは未検証。**Teamsの更新で構造が変わると見つからず停止する。
 
-**Zoom（字幕の内部状態の購読・試験版）。** `zoom-hook.js` は app.zoom.us のtop frame（https）で、会議ページ `/wc/<5〜15桁>/…` にだけ入る（他の *.zoom.us は `PLATFORM_NOT_IMPLEMENTED`）。会議IDは `app.zoom.us/wc/<番号>`。v0.7.0の画面字幕のDOM読取りは廃止した。アプリのReact木（`#webclient` iframe、`.pwa-webclient__iframe-wrapper iframe`、なければトップ文書）の `__reactContainer*` からたどり、`props.store`（`getState`／`subscribe`／`dispatch`を持ち、状態に `newLiveTranscription` があるもの）を探す（見つからなければ `ZOOM_STORE_NOT_FOUND`）。**開始後だけ**そのストアを `subscribe` し（読み取りのみ、dispatchもreducerの差し替えもしない）、`newLiveTranscription.newLTMessage`（msgId → `{ user: { zoomID, displayName }, text }`）の変化を読む。開始時にあるメッセージとその後の変化は履歴として送らない。`msgId/zoomID` を発話ID、本文の変化を改訂として扱う。本文は先頭の改ページ・NUL・置換文字を除く。使えない項目は個別に捨てて数え、使える項目がないまま50件を超えたときだけ停止する。話者名はメッセージの表示名。lease・所有者・recoverはMeetと同じ。**ストアの構造はTactiq（解析）の仮定で、実Zoomでは未検証。**Zoomの更新で構造が変わると見つからず停止する。
+**Zoom（字幕の内部状態の購読・試験版）。** `zoom-hook.js` は app.zoom.us のtop frame（https）で、会議ページ `/wc/<5〜15桁>/…` にだけ入る（他の *.zoom.us は `PLATFORM_NOT_IMPLEMENTED`）。会議IDは `app.zoom.us/wc/<番号>`。v0.7.0の画面字幕のDOM読取りは廃止した。アプリのReact木（`#webclient` iframe、`.pwa-webclient__iframe-wrapper iframe`、なければトップ文書）の `__reactContainer*` からたどり、`props.store`（`getState`／`subscribe`／`dispatch`を持ち、状態に `newLiveTranscription` があるもの）を探す（見つからなければ `ZOOM_STORE_NOT_FOUND`）。**開始後だけ**そのストアを `subscribe` し（読み取りのみ、dispatchもreducerの差し替えもしない）、`newLiveTranscription.newLTMessage`（msgId → `{ user: { zoomID, displayName }, text }`）の変化を読む。開始時にあるメッセージとその後の変化は履歴として送らない。`msgId/zoomID` を発話ID、本文の変化を改訂として扱う。本文は先頭の改ページ・NUL・置換文字を除く。使えない項目は個別に捨てて数える（その数では停止しない）。話者名はメッセージの表示名。lease・所有者・recoverはMeetと同じ。**ストアの構造はTactiq（解析）の仮定で、実Zoomでは未検証。**Zoomの更新で構造が変わると見つからず停止する。
 
 **Claude Code以外のエージェント（omp・pi・agy）。** 受信口（`127.0.0.1:43821`）と拡張からのPOSTは共通で、セッションへ渡す部分だけが違う。omp・pi：`integrations/pi/live-support.js`（同じ拡張API）が、セッション開始時にエージェントの中で `server/bridge.js` の受信口を開き、トークンを更新し、各バッチを `sendMessage({ customType: "live-support" }, { deliverAs: "followUp", triggerTurn: true })` で渡す（最初のメッセージに `server/instructions.js` の説明を付ける）。送信に失敗すれば503でパネルが再送する。子セッションは受信口を二重に開かず、終了時に閉じる。agy：`LIVE_SUPPORT_TOOLS=1` のMCPサーバーが、Channelsの通知の代わりに最新200件のバッチを保持し、`get_captions`（`after` のカーソル、1回約200KBまで）で返す。いずれもClaude Code用の読取り専用の制限は再現しない。詳しくは [other-agents.md](docs/other-agents.md)。
 
@@ -206,7 +206,7 @@ MCP capabilityは `{ "experimental": { "claude/channel": {} } }`。通知method�
 | HTTP body／request・header timeout | 262144 bytes／各10000 ms |
 | keep-alive／同時接続／session保持 | 1000 ms／16／1プロセス最大32 |
 
-Meetのデコードはprotobufの意味に従い（未知のfieldは読み飛ばし、重複fieldは最後の値、0の値はwireに現れない＝版の欠落は0）、字幕として使えないフレーム（発話なし・話者IDなし・IDが範囲外・形式不正・非バイナリ）は捨てて理由別に数え、**チャネルごとに、使えるフレームが1つもないまま50件を超えたらそのチャネルだけ放棄し**（まだ自前の購読を作っていなければ1回だけ作り）、**使えるチャネルが1つも残らないときだけ** `CAPTION_FORMAT_UNKNOWN` で停止する（理由の件数と、最初の使えないフレームの構造＝field番号とwire型だけがパネルに出る。本文は含まない）。256KB超のフレームと上限超過は `CAPTION_LIMIT` で停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
+Meetのデコードはprotobufの意味に従い（未知のfieldは読み飛ばし、重複fieldは最後の値、0の値はwireに現れない＝版の欠落は0）、字幕として使えないフレーム（発話なし・話者IDなし・IDが範囲外・形式不正・非バイナリ）は、送らず、理由別に数えて捨てる。**その数では停止しない**（チャネルは、最初の字幕の前に字幕以外のデータを大量に流しうる）。使えるものがないまま50件を超えると、パネルが「字幕として使えないデータだけが届いています」と表示し、最初の使えないフレームの構造（field番号とwire型だけ）を見せる。本文は含まない。256KB超のフレームと上限超過は `CAPTION_LIMIT` で停止する。大量の差分は後続のsend tickになる。長時間運用では保持上限に達し得る。
 
 保存先は ~/.live-support/（0700）、tokenは0600。symlink・公開権限は拒否する。setup／tokenは有効な既存tokenを再利用し、claude起動時だけ原子的に更新。tokenコマンドだけが値を明示表示し、通常ログ・ブラウザの永続storageには残さない。パネルだけが、受信サーバーに受理されたtokenを `chrome.storage.session`（メモリのみ・ブラウザ終了で消える・拡張の信頼コンテキスト限定）に記憶し、401／403で消す。tokenはMAIN worldへ渡さない。
 
@@ -225,7 +225,7 @@ LIVE_SUPPORT_RUNTIME_DIRは保存先、LIVE_SUPPORT_PORTはserver portの開発�
 | CAPTIONS_OFF／CAPTION_CONTROL_NOT_FOUND | Meet標準字幕をON、日本語／英語UIの状態を確認。OFFのまま使うなら実験オプション |
 | MEDIA_SESSION_NOT_FOUND／CAPTION_LANGUAGE_UNKNOWN／CAPTION_ENABLE_FAILED | 実験オプション専用。制御チャネル未特定／言語未観測／送信失敗。再試行せず、字幕をONにするかページ再読み込み |
 | CAPTION_SUBSCRIPTION_FAILED | チャネル作成失敗。字幕・組織設定・拡張競合を確認 |
-| CAPTION_FORMAT_UNKNOWN | 未対応wire。本文／生パケットを共有せずコードと件数を報告 |
+| CAPTION_FORMAT_UNKNOWN | 想定外の構造で処理できなかった。本文／生パケットを共有せずコードと件数を報告 |
 | CAPTION_DECODE_BUSY | 前の取消不能読取りの終了待ち。待って再確認、止まる場合は非機密テストでページ再読み込み |
 | CAPTION_ACK_BACKLOG_LIMIT | 自分のACK出力上限。自分の購読だけ閉じて停止、通信状態を確認 |
 | CAPTURE_EXPIRED | heartbeat途絶で破棄。同じ会議へ自動復旧（欠落あり）。復旧が拒否されれば停止 |
