@@ -15,8 +15,12 @@ test("captureScreenshot only accepts a JPEG data URL from the worker and hands i
   const chrome = reply => ({ runtime: { sendMessage: async message => { asked.push(message); return reply; } } });
   assert.deepEqual(plain(await captureScreenshot(7, { chrome: chrome({ ok: true, dataUrl: "data:image/jpeg;base64,AAAA" }), rasterize: shrink })).url, "data:image/jpeg;base64,AAAA");
   assert.deepEqual(asked, [{ type: "live-support-screenshot", tabId: 7 }]);
-  for (const reply of [undefined, { ok: false, reason: "inactive" }, { ok: true }, { ok: true, dataUrl: "data:text/html;base64,AAAA" }, { ok: true, dataUrl: "https://evil.example/x.jpg" }])
-    assert.equal(await captureScreenshot(7, { chrome: chrome(reply), rasterize: shrink }), null);
+  const why = async (reply, options = {}) => captureScreenshot(7, { chrome: options.chrome ?? chrome(reply), rasterize: options.rasterize ?? shrink }).then(() => "none", error => error.code);
+  assert.equal(await why(undefined), "worker"); assert.equal(await why({ ok: false, reason: "inactive" }), "inactive"); assert.equal(await why({ ok: false, reason: "permission" }), "permission");
+  assert.equal(await why({ ok: false, reason: "<script>" }), "failed"); assert.equal(await why({ ok: true }), "format");
+  assert.equal(await why({ ok: true, dataUrl: "data:text/html;base64,AAAA" }), "format"); assert.equal(await why({ ok: true, dataUrl: "https://evil.example/x.jpg" }), "format");
+  assert.equal(await why(null, { chrome: { runtime: { sendMessage: async () => { throw Error("Could not establish connection"); } } } }), "worker");
+  assert.equal(await why({ ok: true, dataUrl: "data:image/jpeg;base64,AAAA" }, { rasterize: async () => { throw Error("bad image"); } }), "decode");
 });
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 
@@ -39,4 +43,19 @@ test("real Chrome: rasterize shrinks to 1280px, encodes a JPEG and produces a st
   };
   const result = await runInChrome(t, { hook: "zoom-hook.js", hostname: "app.zoom.us", pathname: "/wc/12345678/join", body: "<script>" + source + "</script>", suite });
   assert.ok(result.checks >= 7);
+});
+
+test("real Chrome: rasterize works under the extension pages' CSP (connect-src allows only the bridge, so a data: URL must not be fetched)", { skip: !chromeBinary, timeout: 40000 }, async t => {
+  const source = (await readFile(new URL("../extension/screenshot.js", import.meta.url), "utf8")).replace(/^export /gm, "");
+  const suite = async function () {
+    const meta = document.createElement("meta"); meta.httpEquiv = "Content-Security-Policy"; meta.content = "connect-src http://127.0.0.1:43821"; document.head.append(meta);
+    const canvas = document.createElement("canvas"); canvas.width = 640; canvas.height = 360; const c = canvas.getContext("2d"); c.fillStyle = "#336"; c.fillRect(0, 0, 640, 360);
+    const url = canvas.toDataURL("image/jpeg", 0.8);
+    let controlBlocked = false; try { await fetch(url); } catch { controlBlocked = true; }
+    const shot = await rasterize(url);
+    return { ok: true, checks: 1, controlBlocked, jpeg: [shot.bytes[0], shot.bytes[1]], signature: shot.signature.length };
+  };
+  const result = await runInChrome(t, { hook: "zoom-hook.js", hostname: "app.zoom.us", pathname: "/wc/12345678/join", body: "<script>" + source + "</script>", suite });
+  assert.equal(result.controlBlocked, true, "the CSP in this page really blocks fetching a data: URL");
+  assert.deepEqual([result.jpeg, result.signature], [[0xff, 0xd8], 576]);
 });

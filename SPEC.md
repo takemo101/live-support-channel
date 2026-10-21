@@ -269,3 +269,7 @@ Node標準test runner。合成protobuf／gzip／不正・上限・signed-int64�
 - [Chrome inspectedWindow](https://developer.chrome.com/docs/extensions/reference/api/devtools/inspectedWindow)
 - [Claude Channels](https://code.claude.com/docs/en/channels)／[reference](https://code.claude.com/docs/en/channels-reference)
 - [Claude Skills](https://code.claude.com/docs/en/skills)／[CLI](https://code.claude.com/docs/en/cli-reference)／[permissions](https://code.claude.com/docs/en/permissions)
+
+## 補足：スクリーンショットの失敗理由
+
+パネルは、画像を撮れない・送れないとき、状態に `画像=N（理由）` を出す。理由は固定語彙（worker／host／inactive／rate／permission／failed／format／decode／upload）で、画像や本文は含まない。`rasterize` は、拡張ページのCSP（`connect-src` はブリッジのみ）に反するため、data: URL を `fetch` せず手でデコードする（`fetch` では実Chromeで `Failed to fetch` になることを再現済み）。
