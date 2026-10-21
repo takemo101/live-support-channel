@@ -9,7 +9,7 @@ class Element extends EventTarget {
   click() { if (!this.disabled) this.dispatchEvent(new Event("click")); }
 }
 function setup(t, fetcher, storage, screenshot) {
-  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "assist", "batch", "shots"].map(id => [id, new Element()]));
+  const elements = Object.fromEntries(["token", "meeting", "refresh", "start", "pause", "stop", "status", "consent", "state", "setup", "batch", "shots"].map(id => [id, new Element()]));
   elements.batch.value = "pause"; elements.shots.checked = true; elements.token.value = "t".repeat(43); elements.consent.checked = true;
   const block = { messageId: "m", messageVersion: 1, speakerName: "Demo", transcript: "private baseline", timestamp: 100, version: 1 };
   const fixture = { captionReady: true, error: undefined, snapshot: { status: "live", meetingId: "meet.google.com/abc-defg-hij", platform: "Google Meet", blocks: [block] } };
@@ -357,26 +357,6 @@ test("a token is not stored before the local server accepted it", async t => {
   const saved = { token: undefined };
   const s = setup(t, () => ({ ok: false, status: 503 }), { get: async () => undefined, set: async token => { saved.token = token; }, remove: async () => {} });
   await start(s); assert.equal(saved.token, undefined);
-});
-
-test("caption-less start is opt-in, per start, and follows the checkbox in discovery and start", async t => {
-  const s = setup(t); s.elements.refresh.click(); await turn();
-  assert.equal(s.elements.assist.checked, undefined);
-  assert.ok(s.actions.every(a => a.assistCaptions !== true));
-  s.elements.assist.checked = true; s.elements.assist.dispatchEvent(new Event("change")); await turn();
-  assert.equal(s.actions.at(-1).action, "discover"); assert.equal(s.actions.at(-1).assistCaptions, true);
-  s.elements.meeting.value = s.fixture.snapshot.meetingId; s.elements.start.click(); await turn();
-  assert.equal(s.actions.find(a => a.action === "start").assistCaptions, true);
-  s.elements.stop.click();
-  s.elements.assist.checked = false; s.elements.refresh.click(); await turn(); s.elements.start.click(); await turn();
-  assert.ok(!s.actions.filter(a => a.action === "start").at(-1).assistCaptions);
-});
-test("assisted refusals are explained and stop a capture", async t => {
-  for (const code of ["MEDIA_SESSION_NOT_FOUND", "CAPTION_LANGUAGE_UNKNOWN", "CAPTION_ENABLE_FAILED"]) {
-    const s = setup(t); s.fixture.captionReady = false; s.fixture.discoveryCode = code;
-    s.elements.refresh.click(); await turn();
-    assert.ok(s.elements.status.textContent.includes(code)); assert.ok(!s.elements.status.textContent.includes("READ_FAILED"));
-  }
 });
 
 test("a Teams capture is discovered, explained, and sent as Teams", async t => {

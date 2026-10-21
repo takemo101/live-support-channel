@@ -12,7 +12,7 @@ const DESCRIPTION = { pause: "発話の区切りごと（最大10秒）", 5: "�
 export function createPanel({ document, inspectedWindow, onNavigated, fetch, setInterval, clearInterval, storage, screenshot, now = () => performance.now() }) {
   const el = id => document.getElementById(id);
   const endpoint = "http://127.0.0.1:43821";
-  let active = false, paused = false, busy = false, captionReady = false, failed = false, assistCaptions = false, platform = "Google Meet";
+  let active = false, paused = false, busy = false, captionReady = false, failed = false, platform = "Google Meet";
   let batch = "pause", lastChange = 0, pendingSince = null, lastSent = 0, retryAt = 0;
   let generation = 0, readTimer, sendTimer, controller, meetingId, pairingToken, captureId, capturePromise, lastSnapshot, recovery, recoveries = 0;
   const captured = new Map(), signatures = new Map();
@@ -26,7 +26,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     el("state").textContent = label; el("state").className = "state " + kind;
   }
   function controls() {
-    for (const id of ["token", "meeting", "refresh", "consent", "assist", "shots"]) if (el(id)) el(id).disabled = active;
+    for (const id of ["token", "meeting", "refresh", "consent", "shots"]) if (el(id)) el(id).disabled = active;
     el("start").disabled = active || !captionReady || !el("meeting").value || !el("consent").checked;
     el("stop").disabled = !active;
     el("pause").disabled = !active || busy || !stream.run;
@@ -36,7 +36,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     badge();
   }
   function evaluate(action, owner = captureId, previousCaptureId) {
-    const params = { action, meetingId, captureId: owner, previousCaptureId, assistCaptions: assistCaptions && (action === "discover" || action === "start") ? true : undefined };
+    const params = { action, meetingId, captureId: owner, previousCaptureId };
     return new Promise((resolve, reject) => {
       inspectedWindow.eval(`(${readCaptions.toString()})(${JSON.stringify(params)})`, {}, (result, error) => {
         if (error === true || error?.isError || error?.isException) {
@@ -97,7 +97,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   async function refresh() {
     if (active) return;
     const run = ++generation;
-    captionReady = false; failed = false; assistCaptions = el("assist").checked === true; el("meeting").replaceChildren(); controls();
+    captionReady = false; failed = false; el("meeting").replaceChildren(); controls();
     try {
       const result = await evaluate("discover");
       if (active || run !== generation) return;
@@ -192,7 +192,7 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
     if (busy || (resume ? !active || !paused : active)) return;
     if (!resume && (!captionReady || !el("consent").checked || !el("meeting").value)) { status("字幕の準備確認と参加者同意が必要です。"); return; }
     if (!resume && !/^[A-Za-z0-9_-]{43}$/.test(el("token").value.trim())) { status("ペアリングトークン（43文字）を確認してください。"); return; }
-    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; assistCaptions = el("assist").checked === true; batch = Object.hasOwn(DESCRIPTION, el("batch")?.value) ? el("batch").value : "pause"; shotsOn = typeof screenshot === "function" && el("shots")?.checked !== false; lastShot = null; shotsSent = 0; }
+    if (!resume) { pairingToken = el("token").value.trim(); meetingId = el("meeting").value; batch = Object.hasOwn(DESCRIPTION, el("batch")?.value) ? el("batch").value : "pause"; shotsOn = typeof screenshot === "function" && el("shots")?.checked !== false; lastShot = null; shotsSent = 0; }
     active = true; busy = true; failed = false;
     const run = ++generation;
     controller = new AbortController(); captureId = crypto.randomUUID();
@@ -235,7 +235,6 @@ export function createPanel({ document, inspectedWindow, onNavigated, fetch, set
   el("stop").addEventListener("click", () => stop());
   el("meeting").addEventListener("change", controls);
   el("consent").addEventListener("change", controls);
-  el("assist").addEventListener("change", () => { void refresh(); });
   onNavigated.addListener(navigate); controls();
   void Promise.resolve(storage?.get()).then(token => { if (typeof token === "string" && !el("token").value && !active) el("token").value = token; }).catch(() => {});
   return { stop, refresh, dispose() { stop(); onNavigated.removeListener(navigate); } };

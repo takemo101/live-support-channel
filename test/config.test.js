@@ -13,7 +13,7 @@ test("extension prepares MAIN-world hooks on the meeting sites only, with no bro
   assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.background, { service_worker: "background.js" });
   assert.deepEqual(manifest.content_scripts, [
-    { matches: ["https://meet.google.com/*"], js: ["hook-core.js", "meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
+    { matches: ["https://meet.google.com/*"], js: ["hook-core.js", "meet-wire.js", "meet-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
     { matches: ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], js: ["hook-core.js", "teams-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
     { matches: ["https://app.zoom.us/*"], js: ["hook-core.js", "zoom-hook.js"], run_at: "document_start", world: "MAIN", all_frames: false },
   ]);
@@ -21,10 +21,8 @@ test("extension prepares MAIN-world hooks on the meeting sites only, with no bro
   const html = await readFile(new URL("../extension/panel.html", import.meta.url), "utf8");
   for (const id of ["token", "meeting", "consent", "refresh", "start", "pause", "stop", "status"]) assert.ok(html.includes('id="' + id + '"'));
   assert.match(html, /role="status"/);
-  assert.match(html, /字幕通信/);
-  assert.match(html, /会議参加前/);
-  assert.match(html, /Tactiqの一時停止とは連動しません/);
-  assert.match(html, /Zoom/); assert.match(html, /Teams/);
+  for (const id of ["shots", "batch", "setup"]) assert.ok(html.includes('id="' + id + '"'), id);
+  assert.ok(!html.includes('id="assist"'), "the caption-less start option is gone");
   assert.ok(!/<script[^>]*>[^<\s]/.test(html));
 });
 test("leaving the DevTools panel signals a stop", async () => {

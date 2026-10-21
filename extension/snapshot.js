@@ -1,5 +1,5 @@
 // Serialized into the normal page context; invokes only our prepared hook, never a DOM fallback.
-export function readCaptions({ action = "discover", meetingId, captureId, previousCaptureId, assistCaptions } = {}) {
+export function readCaptions({ action = "discover", meetingId, captureId, previousCaptureId } = {}) {
   if (action === "reset") {
     const api = window.__liveCaptionsRtc_v1;
     if (api?.version === 1 && typeof api.command === "function") return api.command({ action, captureId });
@@ -19,5 +19,5 @@ export function readCaptions({ action = "discover", meetingId, captureId, previo
   if (action !== "discover" && meetingId !== id) return { status: "ended", code: "MEETING_CHANGED" };
   const api = window.__liveCaptionsRtc_v1;
   if (api?.version !== 1 || typeof api.command !== "function") return { status: "unavailable", code: "RTC_HOOK_NOT_READY" };
-  return api.command({ action, meetingId: id, captureId, previousCaptureId, assistCaptions });
+  return api.command({ action, meetingId: id, captureId, previousCaptureId });
 }

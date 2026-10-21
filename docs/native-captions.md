@@ -20,7 +20,7 @@ Tactiq **3.1.7185** の配布JavaScriptを、実行せず静的テキストと�
 | captions_v2 | 外側1=utterance。utterance内1=int64 ID、2=revision、3=caption。caption内3=本文、4=言語code、6=device文字列 |
 | own-v2 ACK | 外側1=body、body内1=ref、ref内1=ID、2=revision、3=1 |
 
-**meet_messagesはチャット系**であり、字幕として処理しない。イベント名がspeechでも、payloadの意味が字幕とは限らない。collections／media-sessionは接続を識別するラベルだけを使い、その本文や参加者一覧は読まない。fetch・WebSocket・言語変更・認証情報・音声は対象外。
+**meet_messagesはチャット系**であり、字幕として処理しない。イベント名がspeechでも、payloadの意味が字幕とは限らない。media-sessionは接続を識別するラベルだけを使い、本文は読まない。collectionsと、Meet自身の `SyncMeetingSpaceCollections` のfetch応答は、話者名の名簿のためにだけ読む（下記）。WebSocket・言語変更・認証情報・音声は対象外。
 
 legacyは通常protobuf、またはgzip開始位置0／3の既知framingだけを扱う。生文字列や曖昧なbyteパターンから本文を拾わない。入力／展開後各256KiB、各message64 fields、既知3層の範囲に限り、不正UTF8・重複field・過大整数・未知wireは停止する。
 
@@ -80,7 +80,7 @@ lease失効だけは、パネルが新しい所有者でrecoverを呼んで同�
 - **購読**：Tactiqは字幕開始時に、自分で `captions` と `captions_v2` のチャネルを（ordered・maxRetransmits 10で）作り、さらにMeet側が作った（リモートの）同名チャネルも観測する。受信は `captions_v2` が素のprotobuf（Packet.utterance＝id・version・caption{text・languageCode・deviceId}）、`captions` がgzip（先頭または3バイト目）＋ラッパーのprotobufで、protobufとして使えない旧形式の保険にバイト列のパターン探索を持つ。
 - **許容**：不正・不要なフレームは `rejected` にして無視し、取得は止めない。protobufの0は送られないので、versionの欠落は0。
 - **名簿**：`collections` チャネルのprotobuf（deviceId→deviceName）。`collections`・`meet_messages` の他のメッセージはチャットで、字幕ではない。
-- **言語設定の再送**：チャネルを採用・作成したとき、観測済みの字幕言語の設定コマンドを `media-session` へ再送する（当方は実験オプション「字幕がOFFでも開始」のときだけ書き込む）。
+- **言語設定の再送**：チャネルを採用・作成したとき、観測済みの字幕言語の設定コマンドを `media-session` へ再送する（当方は `media-session` に書き込まない）。
 - **当方の対応**：デコードはprotobuf並みに緩く、使えないフレームは理由別に数えて捨てる。**その数では停止しない**（以前は50件で停止していたが、字幕の前に字幕以外のフレームが流れる場合に早すぎる停止になるため廃止した）。使えるものがないまま50件を超えたら、パネルが知らせ、最初の使えないフレームの構造（field番号とwire型のみ）を出す。
 
 ## 実Meetで観測した形（構造のみ）

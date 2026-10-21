@@ -43,41 +43,18 @@
     const results = body && typeof body === "object" && Array.isArray(body.recognitionResults) ? body.recognitionResults.slice(0, 65) : null;
     if (results) for (const item of results) ingest(s, item);
   }
-  // Opt-in (assist): starts Teams' own live captions, the way Teams' UI would, when they are not running yet.
-  function startCaptions(call) {
-    try {
-      if (typeof call.startClosedCaption !== "function") return;
-      if (typeof call.closedCaptionsHaveBeenStarted === "function" && call.closedCaptionsHaveBeenStarted()) return;
-      call.startClosedCaption();
-    } catch {}
-  }
-  const WAIT = 250, ATTEMPTS = 80;
   function attach(s) {
     const call = activeCall(); if (!call) throw life.invalid();
     s.call = call;
-    if (s.assisted) startCaptions(call);
-    let target = null, original = null, timer = null, tries = 0;
+    let target = null, original = null;
     // Never throws into Teams and always hands the call on to the original handler.
     const wrapper = function (type, payload) {
       life.guard(s, () => receive(s, type, payload));
       return original.apply(this, arguments);
     };
-    const wrap = () => {
-      const found = handlerOf(call); if (!found || typeof found.handler !== "function") return false;
-      original = found.handler; target = found; found.handler = wrapper; return true;
-    };
-    // The handler can appear only once captions run (right after an assisted start): look for it for a few seconds.
-    if (!wrap()) {
-      if (!s.assisted) throw life.invalid();
-      const poll = () => {
-        timer = null; if (life.current !== s) return;
-        if (wrap()) return;
-        if (++tries >= ATTEMPTS) { finish("TEAMS_CALL_NOT_FOUND"); return; }
-        timer = page.setTimeout(poll, WAIT);
-      };
-      timer = page.setTimeout(poll, WAIT);
-    }
-    return () => { if (timer !== null) page.clearTimeout(timer); if (target && target.handler === wrapper) target.handler = original; };
+    const found = handlerOf(call); if (!found || typeof found.handler !== "function") throw life.invalid();
+    original = found.handler; target = found; found.handler = wrapper;
+    return () => { if (target.handler === wrapper) target.handler = original; };
   }
   const nameOf = (record, s) => {
     try {
@@ -88,10 +65,9 @@
       return self && self.mri === record.speaker ? life.displayName(self.displayName) : "";
     } catch { return ""; }
   };
-  function metadata(assist = false) {
-    const id = currentMeeting(), call = activeCall(), target = handlerOf(call);
-    const ready = (target && typeof target.handler === "function") || (assist && call && typeof call.startClosedCaption === "function");
-    const code = !id ? "NOT_MEETING_PAGE" : ready ? "READY" : "TEAMS_CALL_NOT_FOUND";
+  function metadata() {
+    const id = currentMeeting(), target = handlerOf(activeCall());
+    const code = !id ? "NOT_MEETING_PAGE" : target && typeof target.handler === "function" ? "READY" : "TEAMS_CALL_NOT_FOUND";
     const stats = life.current?.stats ?? life.terminal?.stats ?? { received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0 };
     return { status: "ready", source: "teams-call-experimental", platform: "Teams",
       meetings: id ? [{ id, title: "Microsoft Teams（通話の字幕イベント・試験版）" }] : [], captionReady: code === "READY", code,

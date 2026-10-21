@@ -16,7 +16,7 @@
     "https://app.zoom.us/*"
   ],
   "content_scripts": [
-    { "matches": ["https://meet.google.com/*"], "js": ["hook-core.js", "meet-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
+    { "matches": ["https://meet.google.com/*"], "js": ["hook-core.js", "meet-wire.js", "meet-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
     { "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], "js": ["hook-core.js", "teams-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
     { "matches": ["https://app.zoom.us/*"], "js": ["hook-core.js", "zoom-hook.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false }
   ],

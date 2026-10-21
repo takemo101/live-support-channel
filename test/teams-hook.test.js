@@ -9,12 +9,10 @@ const key = "__liveCaptionsRtc_v1", meetingId = "teams.microsoft.com/call";
 const plain = value => JSON.parse(JSON.stringify(value));
 
 // A stand-in for the app's active call: the participant list and the remote-event handler the calling code owns.
-function makeCall({ handler = true, startable = false, started = false } = {}) {
+function makeCall({ handler = true } = {}) {
   const on = { name: "remoteUserEventsReceived", received: [], handler(type, payload) { on.received.push([type, payload]); } };
   const call = { on, participants: [{ mri: "u-alice", displayName: "Alice Example" }, { mri: "u-bob", displayName: "Bob\u202E Example\u0000" }],
     currentUserSkypeIdentity: { mri: "u-me", displayName: "Me Example" }, dataChannel: { subscriptions: [{ eventHandler: { on: { name: "other" } } }, ...(handler ? [{ eventHandler: { on } }] : [])] } };
-  if (startable) Object.assign(call, { starts: 0, startClosedCaption() { call.starts++; call.on.running = true; }, closedCaptionsHaveBeenStarted: () => started || call.on.running === true });
-  call.appear = () => call.dataChannel.subscriptions.push({ eventHandler: { on } });
   return call;
 }
 const item = (ts, user, version, text, extra = {}) => ({ id: `m${ts}/${version}`, userId: user, timestampAudioSent: ts, text, ...extra });
@@ -35,7 +33,7 @@ function fixture({ host = "teams.microsoft.com", framed = false, protocol = "htt
   const emit = (type, payload) => call.on.handler(type, payload);
   return { api: page[key], call, state, command, emit, timers, say: (...items) => emit("3", results(...items)),
     expire() { now += 2100; for (const timer of [...timers.values()]) timer.fn(); },
-    wait() { for (const [id, timer] of [...timers]) if (timer.delay === 250) { timers.delete(id); timer.fn(); } }, blocks: owner => plain(command("read", {}, owner).blocks ?? []) };
+    blocks: owner => plain(command("read", {}, owner).blocks ?? []) };
 }
 
 test("hook installs only in the top frame of the Teams hosts over https", () => {
@@ -104,25 +102,7 @@ test("the call ending stops the capture; an abandoned lease expires and recover 
   g.say(item(2, "u-alice", 2, "kept revised")); g.say(item(3, "u-alice", 1, "first after recovery"));
   assert.deepEqual(g.blocks("next").map(b => b.transcript), ["first after recovery"], "a speaker's first utterance after recovery is history again");
 });
-test("assist: captions are started once through the call, and the handler is picked up when it appears", () => {
-  const plainFixture = fixture({ call: makeCall({ handler: false, startable: true }) });
-  assert.equal(plainFixture.command("discover").code, "TEAMS_CALL_NOT_FOUND", "without assist the captions must already run");
-  assert.equal(plainFixture.command("start").code, "TEAMS_CALL_NOT_FOUND"); assert.equal(plainFixture.call.starts, 0, "nothing is started without assist");
-  const f = fixture({ call: makeCall({ handler: false, startable: true }) });
-  assert.equal(f.command("discover", { assistCaptions: true }).code, "READY");
-  assert.equal(f.command("start", { assistCaptions: true }).status, "live"); assert.equal(f.call.starts, 1);
-  f.call.appear(); f.wait(); f.say(item(1, "u-alice", 1, "history")); f.say(item(2, "u-alice", 1, "heard after the handler appeared"));
-  assert.deepEqual(f.blocks().map(b => b.transcript), ["heard after the handler appeared"]);
-  f.command("reset"); assert.equal(f.timers.size, 0, "no timer outlives the capture");
-  const running = fixture({ call: makeCall({ startable: true, started: true }) });
-  running.command("start", { assistCaptions: true }); assert.equal(running.call.starts, 0, "captions that already run are left alone");
-});
-test("assist: a handler that never appears ends the capture, and recover keeps the assisted mode", () => {
-  const f = fixture({ call: makeCall({ handler: false, startable: true }) }); f.command("start", { assistCaptions: true });
-  for (let i = 0; i < 79; i++) f.wait(); assert.equal(f.command("read").status, "live", "still looking");
-  f.wait(); assert.equal(f.command("read").code, "TEAMS_CALL_NOT_FOUND");
-  const g = fixture({ call: makeCall({ handler: false, startable: true }) }); g.command("start", { assistCaptions: true });
-  g.call.appear(); g.wait(); g.expire();
-  assert.equal(g.command("read").code, "CAPTURE_EXPIRED");
-  assert.equal(g.command("recover", { previousCaptureId: "owner" }, "next").status, "live", "recover needs no assistCaptions flag");
+test("without the call's handler (captions not running) the capture is refused and nothing is started", () => {
+  const f = fixture({ call: makeCall({ handler: false }) });
+  assert.equal(f.command("discover").code, "TEAMS_CALL_NOT_FOUND"); assert.equal(f.command("start").code, "TEAMS_CALL_NOT_FOUND");
 });

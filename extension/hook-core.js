@@ -16,7 +16,7 @@
       current = null; cancel(s.timer);
       try { s.detach?.(); } catch {}
       s.detach = null;
-      terminal = { owner: s.owner, generation: s.generation, meetingId: s.meetingId, code, assisted: s.assisted === true,
+      terminal = { owner: s.owner, generation: s.generation, meetingId: s.meetingId, code,
         stats: { ...s.stats, queued: 0, inFlight: inFlight ? inFlight(s) : 0 } };
       cleanup(s);
       return retired;
@@ -108,16 +108,14 @@
     function guard(s, run) { try { if (valid(s)) run(); } catch (error) { stop(s, error); } }
     // start / recover / read. `attach(s)` hooks the page and returns the function that unhooks; `nameOf(record, s)` gives the speaker's display name or "".
     function messageCommand(params, { metadata, platform, attach, nameOf, check, extra = {}, stats = {} }) {
-      const assist = params.assistCaptions === true;
-      const early = prologue(params, () => metadata(assist)); if (early) return early;
+      const early = prologue(params, metadata); if (early) return early;
       const { action, meetingId, captureId } = params;
       if (action === "start" || action === "recover") {
-        const assisted = action === "recover" ? terminal?.assisted === true : assist;
-        const meta = metadata(assisted); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
+        const meta = metadata(); if (!meta.captionReady) return { status: "unavailable", code: meta.code };
         const retired = finish("CAPTURE_REPLACED");
         if (generation !== retired) return { status: "ended", code: "CAPTURE_CHANGED" };
         terminal = null;
-        const s = { owner: captureId, meetingId, assisted, records: new Map(), speakers: new Map(), characters: 0, detach: null, ...extra,
+        const s = { owner: captureId, meetingId, records: new Map(), speakers: new Map(), characters: 0, detach: null, ...extra,
           stats: { ...stats, received: 0, accepted: 0, baselineExcluded: 0, dropped: 0, queued: 0, inFlight: 0 } };
         activate(s);
         try { s.detach = attach(s); if (current !== s) { s.detach?.(); s.detach = null; } } catch (error) { stop(s, error); return { status: "unavailable", code: terminal?.code ?? "CAPTURE_CHANGED" }; }
