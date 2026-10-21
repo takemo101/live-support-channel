@@ -40,3 +40,15 @@ test("captures are rate limited and a failing capture is reported, never thrown"
   assert.deepEqual(await worker({ captureError: "denied" }).ask(message(5)), { ok: false, reason: "failed" });
   assert.deepEqual(await worker().ask(message(6)), { ok: false, reason: "failed" }, "an unknown tab");
 });
+
+test("clicking the toolbar icon on a meeting tab shows the capture badge there; other sites read 対象外", () => {
+  let click; const badges = [];
+  const chrome = { runtime: { id: "x", getURL: p => p, onMessage: { addListener() {} } }, tabs: {},
+    action: { onClicked: { addListener: fn => { click = fn; } }, setBadgeText: options => badges.push(options) } };
+  vm.runInNewContext(source, { chrome, URL, Date, Number });
+  click({ id: 5, url: "https://meet.google.com/abc-defg-hij" }); click({ id: 6, url: "https://example.com/" }); click({ id: 7 }); click({ id: 8, url: "http://meet.google.com/abc" });
+  assert.deepEqual(JSON.parse(JSON.stringify(badges)), [{ tabId: 5, text: "撮影" }, { tabId: 6, text: "対象外" }, { tabId: 7, text: "対象外" }, { tabId: 8, text: "対象外" }]);
+});
+test("a worker without an action API still loads (the screenshot listener is independent)", () => {
+  assert.doesNotThrow(() => worker());
+});

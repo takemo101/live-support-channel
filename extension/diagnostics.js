@@ -34,9 +34,10 @@ const messages = {
 };
 // Why no screenshot was taken (codes come from screenshot.js / background.js; anything else reads as a plain failure).
 const shotProblems = {
+  same: "画面は前回と同じとみなしました。変化が小さいときは送りません",
   worker: "拡張の背景処理に届きません。chrome://extensions で拡張を再読み込みしてください",
-  host: "会議のタブではありません", inactive: "会議のタブが前面にありません", rate: "撮影が続けて呼ばれました",
-  permission: "撮影の権限がありません。拡張を再読み込みし、権限の確認が出たら許可してください", failed: "撮影に失敗しました",
+  host: "会議のタブではありません", inactive: "会議のタブが、そのウィンドウで選ばれていません（別のタブを見ていると撮れません。会議のタブをドラッグして別ウィンドウに分けてください）", rate: "撮影が続けて呼ばれました",
+  permission: "撮影の許可がありません。会議のタブで、ブラウザ右上の拡張アイコン「Live Support」を1回クリックしてください（拡張のメニューの中なら、ピンで留めると押しやすくなります）", failed: "撮影に失敗しました",
   timeout: "撮影が時間内に終わりませんでした。30秒間は撮影を休みます", format: "撮影結果の形式が想定外です", decode: "画像の変換に失敗しました", upload: "画像の送信に失敗しました",
 };
 export const shotProblem = code => Object.hasOwn(shotProblems, code) ? shotProblems[code] : shotProblems.failed;
