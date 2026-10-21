@@ -22,9 +22,15 @@ async function launch(t, fromHome = false, extraEnv = {}) {
 test("launch enables only Skill, project read tools and web search with session-local plugin", async t => {
   const { result, args } = await launch(t);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill,WebSearch");
+  assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill,Agent,WebSearch");
   const permissions = JSON.parse(args[args.indexOf("--settings") + 1]).permissions;
-  assert.deepEqual(permissions.allow, ["WebSearch"], "search runs on its own; there is no WebFetch");
+  assert.deepEqual(permissions.allow, ["WebSearch", "Agent(researcher)"], "search runs on its own; there is no WebFetch");
+  for (const name of ["general-purpose", "Explore", "Plan"]) assert.ok(permissions.deny.includes("Agent(" + name + ")"), name + " cannot run as a subagent");
+  assert.ok(permissions.deny.includes("Read(//**/.env)"), "the secret-file denies are still there");
+  const agents = JSON.parse(args[args.indexOf("--agents") + 1]);
+  assert.deepEqual(Object.keys(agents), ["researcher"]);
+  assert.deepEqual(agents.researcher.tools, ["WebSearch"], "the researcher can search and nothing else: no file reads, no page fetches");
+  assert.equal(agents.researcher.model, "haiku"); assert.match(agents.researcher.prompt, /at most 2 WebSearch/);
   assert.ok(!args.includes("--disable-slash-commands"));
   assert.ok(args.includes("--restricted"));
   assert.equal(args[args.indexOf("--permission-mode") + 1], "manual");
@@ -36,7 +42,9 @@ test("LIVE_SUPPORT_WEB=0 turns the web tools off completely", async t => {
   const { result, args } = await launch(t, false, { LIVE_SUPPORT_WEB: "0" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Skill");
-  assert.equal(JSON.parse(args[args.indexOf("--settings") + 1]).permissions.allow, undefined);
+  const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+  assert.equal(settings.permissions.allow, undefined); assert.ok(!settings.permissions.deny.some(rule => rule.startsWith("Agent(")));
+  assert.ok(!args.includes("--agents"), "no subagent without web search");
 });
 test("startup prompt is separated from the variadic development-channel option", async t => {
   const { result, args } = await launch(t);
@@ -74,7 +82,7 @@ test("plugin uses the repository-root skills directory and is included in npm fi
   assert.match(text, /description: Use when/);
   assert.match(text, /disable-model-invocation: true/);
   assert.ok(!text.includes("context: fork"));
-  assert.match(text, /^allowed-tools: Read, Glob, Grep, WebSearch$/m, "the skill reads the project and searches the web, nothing else");
+  assert.match(text, /^allowed-tools: Read, Glob, Grep, Agent$/m, "the skill reads the project and delegates the web lookup, nothing else");
   assert.ok(text.includes("Chromeパネルの停止ボタン"), "ending advice must say the transport keeps running");
   const manifest = JSON.parse(await readFile(join(root, ".claude-plugin/plugin.json"), "utf8"));
   assert.equal(manifest.name, "live-support");

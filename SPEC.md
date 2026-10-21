@@ -62,7 +62,7 @@ tokenを公開しないでください。ランチャーはcwdを維持し、イ
 
 ランチャーの安全設定：
 
-- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill,WebSearch`（`LIVE_SUPPORT_WEB=0` で `Read,Glob,Grep,Skill`）。`permissions.allow` は `WebSearch` のみ。WebFetchは有効にしない（検索は1回の更新で1〜2回、結果の要約だけを使う）。検索語はエージェントが会話から作るため、skillが一般的な語だけを求める（話者名・社名・案件名・金額・字幕の文章・画面の内容を含めない）。これは指示であり、検査ではない。
+- `--strict-mcp-config`、`--tools Read,Glob,Grep,Skill,Agent,WebSearch`（`LIVE_SUPPORT_WEB=0` で `Read,Glob,Grep,Skill`）。検索は背景のサブエージェント `researcher`（`--agents`、`tools: [WebSearch]`、`model: haiku`、検索は最大2回・ページは開かない）に任せ、メインは暫定カードを先に出して、結果を「追補」で受ける。`permissions.allow` は `WebSearch` と `Agent(researcher)`、`permissions.deny` に `Agent(general-purpose)`・`Agent(Explore)`・`Agent(Plan)`（他のサブエージェントにプロジェクトの読取りツールを持たせない）。WebFetchは有効にしない。サブエージェントがWebSearchを使うには、セッションのtoolsにWebSearchが必要なため、メインにも検索は可能だが、skillが依頼文の規則と「自分では検索しない」を求める。検索語は会話から作られるため、一般的な語だけを求める（話者名・社名・案件名・金額・字幕の文章・画面の内容を含めない）。これは指示であり、検査ではない。
 - `--restricted`、`--permission-mode manual`。bypassは使わず、managed設定が優先。
 - `--settings` でhooks、SkillのShell前処理を無効化。`permissions.blockReadsOutsideWorkingDirectories` とRead deny（.env、鍵、.git／.ssh／.aws／.claude、認証設定、実ランタイム保存先）を指定。
 - `--plugin-dir` と `--append-system-prompt-file` で同じ `skills/meeting/SKILL.md` をそのセッションだけに使用。初期ユーザー依頼で会議モードを開始。
