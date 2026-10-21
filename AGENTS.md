@@ -40,6 +40,7 @@ SPEC の該当節と変更対象の要件を読み、次の4点を確認する�
 3. **失敗は明示し、未知の形式は止める**：fail-closed を緩めない。失敗コードを区別し、パネルは既知のコードだけを表示する（`extension/diagnostics.js`）。診断には本文を含めず、件数と UI の識別名だけにする。手動で停止・一時停止した後は自動再開しない。
 4. **話者の情報**：表示名は制御文字と双方向制御文字を除き 64 文字に整形する。内部 device ID と画像 URL は送らない。名前が確定できないときは匿名のラベルにする。
 
+- `integrations/`（pi・omp 用の拡張）と `LIVE_SUPPORT_TOOLS=1`（MCP の pull ツール）は、Claude Code 以外のエージェント向けで、Claude 用の `live-support claude` と受信口・検証・トークンの扱いをそろえる（別の検査経路を作らない）。
 - Node 22 以上。依存は `@modelcontextprotocol/sdk` だけ。依存を足すときは、理由と影響を先に示す。
 - skill の `allowed-tools` は `Read, Glob, Grep` のまま（読取り専用）。編集・Shell・会議相手への自動送信を足さない。制限モード（`--restricted`）では `CLAUDE.md` が自動で読み込まれないため、skill が明示的に読む。
 - 不要な確保・コピー・計算を避ける。
